@@ -1,15 +1,15 @@
 {
-  "name": "NEW_LIB",
+  "name": "ableton-tools",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "./dist/NEW_LIB.umd.cjs",
-  "module": "./dist/NEW_LIB.js",
+  "main": "./dist/ableton-tools.umd.cjs",
+  "module": "./dist/ableton-tools.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/NEW_LIB.js",
-      "require": "./dist/NEW_LIB.umd.cjs"
+      "import": "./dist/ableton-tools.js",
+      "require": "./dist/ableton-tools.umd.cjs"
     }
   },
   "files": [
@@ -25,12 +25,11 @@
     "vite": "^7.1.11",
     "vite-plugin-dts": "^4.5.4"
   },
-  "NEW_LIB TODO": "FILL THESE FIELDS BELOW",
-  "homepage": "",
+  "homepage": "aykev.dev/ableton-tools",
   "keywords": [],
   "repository": {
     "type": "git",
-    "url": "",
-    "directory": ""
+    "url": "https://github.com/mrkev/ableton-tools",
+    "directory": "packages/ableton-tools"
   }
 }

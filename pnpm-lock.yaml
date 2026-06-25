@@ -39,7 +39,7 @@ importers:
         specifier: ^8.61.0
         version: 8.61.0(eslint@10.5.0(jiti@2.6.1))(typescript@5.9.3)
 
-  packages/NEW_LIB:
+  packages/ableton-tools:
     devDependencies:
       vite:
         specifier: ^7.1.11
@@ -53,9 +53,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.1.15
         version: 4.1.15(vite@7.1.11(@types/node@24.9.0)(jiti@2.6.1)(lightningcss@1.30.2)(yaml@2.9.0))
-      NEW_LIB:
+      ableton-tools:
         specifier: workspace:*
-        version: link:../NEW_LIB
+        version: link:../ableton-tools
       react:
         specifier: ^19.2.0
         version: 19.2.0

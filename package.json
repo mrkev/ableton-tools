@@ -7,7 +7,7 @@
     "dev": "npm run --workspace=site dev",
     "build": "npx nx run-many -t build",
     "build:site": "npm run --workspace=site build",
-    "build:lib": "npm run --workspace=NEW_LIB build",
+    "build:lib": "npm run --workspace=ableton-tools build",
     "lint": "eslint"
   },
   "devDependencies": {
