@@ -1,0 +1,36 @@
+{
+  "name": "NEW_LIB",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/NEW_LIB.umd.cjs",
+  "module": "./dist/NEW_LIB.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/NEW_LIB.js",
+      "require": "./dist/NEW_LIB.umd.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite build -c vite.config.ts --watch",
+    "build": "tsc && vite build -c vite.config.ts --emptyOutDir",
+    "preview": "vite preview",
+    "test": "echo 'no tests atm'"
+  },
+  "devDependencies": {
+    "vite": "^7.1.11",
+    "vite-plugin-dts": "^4.5.4"
+  },
+  "NEW_LIB TODO": "FILL THESE FIELDS BELOW",
+  "homepage": "",
+  "keywords": [],
+  "repository": {
+    "type": "git",
+    "url": "",
+    "directory": ""
+  }
+}
