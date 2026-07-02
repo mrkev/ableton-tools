@@ -20,7 +20,14 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+
+    /* Path aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "ableton-tools": ["../ableton-tools/src/index.ts"]
+    }
   },
   "include": ["src/**/*", "vite-env.d.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
