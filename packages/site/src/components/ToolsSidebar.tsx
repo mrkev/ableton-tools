@@ -2,13 +2,10 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DOCUMENT_TOOLS, type ViewMode } from "@/workspace/views";
 import { useWorkspace } from "@/workspace/WorkspaceContext";
-import { AudioLines, FolderOpen, SlidersHorizontal } from "lucide-react";
+import { AudioLines, FolderOpen } from "lucide-react";
 
 /** Tools that are planned but not yet wired up. */
-const FUTURE_TOOLS = [
-  { label: "Devices", icon: SlidersHorizontal },
-  { label: "Clips", icon: AudioLines },
-];
+const FUTURE_TOOLS = [{ label: "Clips", icon: AudioLines }];
 
 export function ToolsSidebar({
   view,

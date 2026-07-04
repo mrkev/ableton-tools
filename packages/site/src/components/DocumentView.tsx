@@ -7,6 +7,7 @@ import { serializeAlsTree } from "ableton-tools";
 import { AlertTriangle, Loader2, Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { NodePath } from "@/workspace/history";
+import { DevicesView } from "./DevicesView";
 import { SummaryView } from "./SummaryView";
 import { TracksView } from "./TracksView";
 import { XmlTree } from "./inspector/XmlTree";
@@ -80,6 +81,11 @@ export function DocumentView({
         <TracksView tree={tree} />
       </ScrollArea>
     );
+  }
+
+  if (view === "devices") {
+    // DevicesView manages its own search header + scroll region.
+    return <DevicesView tree={tree} />;
   }
 
   if (view === "inspector") {

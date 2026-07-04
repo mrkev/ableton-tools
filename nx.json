@@ -1,8 +1,12 @@
 {
   "targetDefaults": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["{projectRoot}/dist"],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "{projectRoot}/dist"
+      ],
       "cache": false
     },
     "test": {
@@ -13,5 +17,6 @@
   "defaultBase": "main",
   "tui": {
     "enabled": false
-  }
+  },
+  "analytics": false
 }
