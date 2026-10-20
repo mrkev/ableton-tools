@@ -39,12 +39,16 @@ enum SelfTest {
 
       // Serialize, then re-open from bytes to prove it's valid + intact.
       let out = try doc.serialized()
-      let tmp = FileManager.default.temporaryDirectory
+      let outPath = CommandLine.arguments.firstIndex(of: "--out").map {
+        URL(fileURLWithPath: CommandLine.arguments[$0 + 1])
+      }
+      let tmp = outPath ?? FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-\(UUID().uuidString).als")
       try out.write(to: tmp)
       let doc2 = try AlsDocument(url: tmp)
       let devices2 = DeviceExtractor.extractAll(doc2.root)
-      try? FileManager.default.removeItem(at: tmp)
+      if outPath == nil { try? FileManager.default.removeItem(at: tmp) }
+      else { print("wrote \(tmp.path)") }
 
       let sameCount = devices2.count == devices.count
       let converted = devices2.first { $0.type == "AuPluginDevice" && $0.name == target.name }

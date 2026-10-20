@@ -18,14 +18,20 @@ enum DeviceBuilder {
       auDev.addAttribute(attr("Id", id))
     }
 
-    // Copy the Ableton envelope, dropping the old plugin's identity + params.
+    // Copy the Ableton envelope verbatim, but swap the two plugin-specific
+    // children *in place* (order matters to Live): the identity `PluginDesc`
+    // becomes an AU descriptor, and the old plugin's `ParameterList` becomes
+    // empty (Live repopulates it from the AU on load).
     for child in src.childElements {
-      let n = child.name ?? ""
-      if n == "PluginDesc" || n == "ParameterList" { continue }
-      if let copy = child.copy() as? XMLElement { auDev.addChild(copy) }
+      switch child.name {
+      case "PluginDesc":
+        auDev.addChild(makePluginDesc(target))
+      case "ParameterList":
+        auDev.addChild(XMLElement(name: "ParameterList"))
+      default:
+        if let copy = child.copy() as? XMLElement { auDev.addChild(copy) }
+      }
     }
-
-    auDev.addChild(makePluginDesc(target))
     return auDev
   }
 
@@ -43,7 +49,10 @@ enum DeviceBuilder {
       val("Manufacturer", au.manufacturer),
       val("ParameterCount", "0"),
       elem("Preset", children: [
-        elem("AuPreset", children: [
+        // AuPreset is a list member, so Live requires an Id. These plugin-local
+        // ids aren't globally unique (real files reuse small values), so a
+        // fixed value is safe.
+        elem("AuPreset", attrs: ["Id": "0"], children: [
           val("OverwriteProtectionNumber", "2561"),
           elem("ParameterSettings"),
           val("IsOn", "true"),
@@ -52,12 +61,13 @@ enum DeviceBuilder {
             val("Min", "64"), val("Max", "127"),
           ]),
           val("IsFolded", "false"),
-          // Default state: let the plugin load its own defaults.
+          // No stored state → the AU loads its own defaults. (Omitting Buffer.)
           val("StoredAllParameters", "false"),
           val("DeviceLomId", "0"),
           val("DeviceViewLomId", "0"),
           val("IsOnLomId", "0"),
           val("ParametersListWrapperLomId", "0"),
+          elem("PresetRef"),
           val("Name", ""),
           val("Manufacturer", mfrVal),
           val("SubType", subVal),
