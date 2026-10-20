@@ -483,7 +483,7 @@ function describeDevice(dev: XmlNode, depth: number): AlsDevice {
   const enabled = deviceEnabled(dev);
   const userName = childValue(dev, "UserName")?.trim() || undefined;
 
-  let category: DeviceCategory = "unknown";
+  let category: DeviceCategory;
   let friendly: string;
   let pluginName: string | undefined;
   let vendor: string | undefined;

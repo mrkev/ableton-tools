@@ -8,6 +8,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/ableton-tools.js",
       "require": "./dist/ableton-tools.umd.cjs"
     }
@@ -31,5 +32,8 @@
     "type": "git",
     "url": "https://github.com/mrkev/ableton-tools",
     "directory": "packages/ableton-tools"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.2"
   }
 }

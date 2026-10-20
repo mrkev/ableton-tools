@@ -1,26 +1,23 @@
 {
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "dev": "npm run --workspace=site dev",
-    "build": "npx nx run-many -t build",
-    "build:site": "npm run --workspace=site build",
-    "build:lib": "npm run --workspace=ableton-tools build",
+    "dev": "pnpm --filter site dev",
+    "build": "nx run-many -t build",
+    "build:site": "nx run site:build",
+    "build:lib": "nx run ableton-tools:build",
     "lint": "eslint"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^2.31.1",
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.5.0",
+    "eslint": "^10.13.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.6.0",
-    "nx": "22.7.5",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "nx": "23.3.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.61.0"
+    "typescript-eslint": "^8.72.0"
   },
-  "packageManager": "pnpm@10.34.3"
+  "packageManager": "pnpm@10.34.7"
 }

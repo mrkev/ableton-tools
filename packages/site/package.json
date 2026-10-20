@@ -8,6 +8,13 @@
     "build": "tsc && vite build -c vite.config.ts --emptyOutDir",
     "preview": "vite preview"
   },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": ["{workspaceRoot}/docs"]
+      }
+    }
+  },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",
