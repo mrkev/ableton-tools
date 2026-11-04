@@ -22,24 +22,21 @@ enum Vst3Cli {
 
     do {
       let doc = try AlsDocument(url: input)
-      // VST3 support (and the block layout we write) arrived in Live 10.
-      let creator = doc.root.attribute(forName: "Creator")?.stringValue ?? ""
-      if let major = creator.split(separator: " ").last?.split(separator: ".").first.flatMap({ Int($0) }),
-         major < 10, !args.contains("--force") {
-        print("\(input.lastPathComponent): saved by \(creator), which predates VST3 in Live."
+      if doc.predatesVst3, !args.contains("--force") {
+        print("\(input.lastPathComponent): saved by \(doc.creator), which predates VST3 in Live."
           + " Open and re-save it in Live 10+ first, or pass --force.")
         return 3
       }
       let devices = DeviceExtractor.extractAll(doc.root)
       let catalog = Vst3Catalog.installed()
-      let automated = Set((try? doc.root.nodes(forXPath: "//PointeeId/@Value"))?.compactMap(\.stringValue) ?? [])
+      let automated = doc.automatedTargetIds
       print("\(input.lastPathComponent): \(devices.count) devices; \(catalog.count) loadable VST3 classes installed")
 
       var converted = 0, skipped = 0
       for d in devices where d.format == .vst {
         let label = "\(d.trackName) › \(d.name)"
         guard let target = Vst3Migration.target(for: d, in: catalog) else {
-          print("  – \(label): no installed native VST3"); skipped += 1; continue
+          print("  – \(label): no installed native VST2-compatible VST3"); skipped += 1; continue
         }
         do {
           let c = try Vst3Migration.prepare(d, target: target, automatedTargets: automated)

@@ -29,6 +29,14 @@ struct Vst2State {
     self.buffer = buffer
   }
 
+  /// Whether a device holds a chunk preset, without decoding its (possibly
+  /// multi-megabyte) buffer.
+  static func isChunkPreset(_ device: XMLElement) -> Bool {
+    device.firstChild("PluginDesc")?.firstChild("VstPluginInfo")?
+      .firstChild("Preset")?.firstChild("VstPreset")?
+      .childValue("Type").flatMap(Int.init).flatMap(DeviceExtractor.fourCC) == "FBCh"
+  }
+
   /// The state a VST2-replacing VST3 accepts in `IComponent::setState`: a
   /// `VstW` header followed by a standard `CcnK`/`FBCh` bank wrapping the VST2
   /// chunk. This is byte-for-byte what a JUCE VST3 writes for itself (verified

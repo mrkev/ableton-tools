@@ -1,35 +1,58 @@
 import SwiftUI
 
+/// The device view for one Live Set.
 struct ContentView: View {
+  @EnvironmentObject var app: AppModel
+  @EnvironmentObject var catalogs: PluginCatalogs
   @EnvironmentObject var model: ConverterModel
-  @State private var onlyPlugins = false
+  @State private var onlyConvertible = true
   @State private var choosingFor: Device?
 
   private var visibleDevices: [Device] {
-    onlyPlugins ? model.devices.filter { $0.format != .native } : model.devices
+    onlyConvertible ? model.devices.filter(\.isConvertible) : model.devices
   }
 
   var body: some View {
     VStack(spacing: 0) {
       toolbar
       Divider()
-      if model.devices.isEmpty {
-        emptyState
+      if let error = model.loadError {
+        ContentUnavailableView(
+          "Couldn't open \(model.fileName)", systemImage: "exclamationmark.triangle",
+          description: Text(error))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if model.document == nil {
+        ProgressView("Opening \(model.fileName)…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if visibleDevices.isEmpty {
+        ContentUnavailableView {
+          Label("No VST2 or VST3 devices", systemImage: "checkmark.circle")
+        } description: {
+          Text("This set has nothing to convert.")
+        } actions: {
+          Button("Show all devices") { onlyConvertible = false }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         columnHeader
         Divider()
         List {
           ForEach(visibleDevices) { device in
-            DeviceRow(device: device, choosingFor: $choosingFor)
+            DeviceRow(device: device, flat: onlyConvertible, choosingFor: $choosingFor)
               .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
           }
         }
         .listStyle(.plain)
+        // Rebuild rather than diff when the filter flips: growing the table in
+        // place triggers AppKit's NSTableView reentrancy warning.
+        .id(onlyConvertible)
       }
       Divider()
       statusBar
     }
-    .frame(minWidth: 820, minHeight: 520)
+    .frame(minWidth: 640, minHeight: 520)
+    .disabled(catalogs.isHostingPlugins)
+    .task { await model.loadIfNeeded() }
     .sheet(item: $choosingFor) { device in
       ChooseAUView(device: device) { au in
         model.setAction(.replaceAU(au), for: device)
@@ -37,23 +60,25 @@ struct ContentView: View {
       } onCancel: {
         choosingFor = nil
       }
-      .environmentObject(model)
     }
   }
 
   private var toolbar: some View {
     HStack(spacing: 10) {
-      Button { model.presentOpenPanel() } label: {
-        Label("Open", systemImage: "folder")
+      if case .set = app.root {
+        Button { app.presentOpenPanel() } label: {
+          Label("Open", systemImage: "folder")
+        }
       }
-      Button { model.autoConvertAllPlugins() } label: {
-        Label("Auto-convert plugins", systemImage: "wand.and.stars")
+      Button { model.convertAllToVst3() } label: {
+        Label("Convert VST2 to VST3", systemImage: "wand.and.stars")
       }
-      .disabled(model.devices.isEmpty)
+      .help("Queue every VST2 device with a native VST3 replacement. Settings are kept.")
+      .disabled(model.devices.isEmpty || catalogs.isLoadingVst3)
 
       Spacer()
 
-      Toggle("Only plugins", isOn: $onlyPlugins)
+      Toggle("Only convertible", isOn: $onlyConvertible)
         .toggleStyle(.checkbox)
         .disabled(model.devices.isEmpty)
 
@@ -80,81 +105,109 @@ struct ContentView: View {
     HStack {
       Text(model.fileName).font(.caption).foregroundStyle(.secondary)
       Spacer()
-      if model.isLoadingCatalog {
-        Text("Scanning Audio Units…").font(.caption).foregroundStyle(.secondary)
+      if catalogs.isLoading {
+        Text("Scanning plugins…").font(.caption).foregroundStyle(.secondary)
       } else {
-        Text("\(model.catalog.count) AUs installed").font(.caption).foregroundStyle(.secondary)
+        Text("\(catalogs.vst3.count) native VST3s · \(catalogs.audioUnits.count) AUs installed")
+          .font(.caption).foregroundStyle(.secondary)
       }
       Spacer()
       Text(model.status).font(.caption).foregroundStyle(.secondary)
+        .lineLimit(1).truncationMode(.middle)
+        .help(model.report.isEmpty ? model.status : model.report.joined(separator: "\n"))
     }
     .padding(.horizontal, 12).padding(.vertical, 6)
-  }
-
-  private var emptyState: some View {
-    VStack(spacing: 12) {
-      Image(systemName: "slider.horizontal.2.square.on.square")
-        .font(.system(size: 40)).foregroundStyle(.secondary)
-      Text("Open an Ableton Live Set to convert its plugin devices.")
-        .foregroundStyle(.secondary)
-      Button("Open .als…") { model.presentOpenPanel() }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
 // MARK: - Row
 
 struct DeviceRow: View {
+  @EnvironmentObject var catalogs: PluginCatalogs
   @EnvironmentObject var model: ConverterModel
   let device: Device
+  /// Listing only some devices: drop rack indentation and name the track instead.
+  let flat: Bool
   @Binding var choosingFor: Device?
 
   var body: some View {
     HStack(spacing: 0) {
-      DeviceCell(device: device)
+      DeviceCell(device: device, flat: flat)
         .frame(maxWidth: .infinity, alignment: .leading)
         .opacity(device.enabled ? 1 : 0.5)
 
-      Image(systemName: "arrow.right")
-        .foregroundStyle(.tertiary)
-        .frame(width: 28)
+      if device.isConvertible {
+        Image(systemName: "arrow.right")
+          .foregroundStyle(.tertiary)
+          .frame(width: 28)
 
-      slot
-        .frame(maxWidth: .infinity, alignment: .leading)
+        slot
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        Spacer().frame(width: 28)
+        Spacer().frame(maxWidth: .infinity)
+      }
     }
     .padding(.vertical, 2)
   }
 
-  @ViewBuilder private var slot: some View {
-    let action = model.action(for: device)
-    Menu {
-      Button("Keep original") { model.setAction(.keep, for: device) }
-      if let s = model.suggestedAU(for: device) {
-        Button("Match → \(s.name)") { model.setAction(.replaceAU(s), for: device) }
-      }
-      Button("Choose Audio Unit…") { choosingFor = device }
-    } label: {
-      switch action {
-      case .keep:
-        SlotLabel(icon: "equal", title: device.name, subtitle: "unchanged",
-                  badge: device.format.badge, tint: .secondary)
-      case .replaceAU(let au):
-        SlotLabel(icon: "checkmark.circle.fill", title: au.name,
-                  subtitle: au.manufacturer, badge: "AU", tint: .green)
-      }
+  private var slot: some View {
+    // The label sits beside the Menu, not inside it: macOS draws a Menu's label
+    // as an AppKit pop-up button, keeping only its first image and text.
+    HStack(spacing: 8) {
+      slotLabel
+      Spacer(minLength: 4)
+      Menu("Change") { menuItems }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(catalogs.isLoadingAudioUnits)
     }
-    .menuStyle(.borderlessButton)
-    .disabled(model.isLoadingCatalog && device.format != .native)
+  }
+
+  @ViewBuilder private var slotLabel: some View {
+    switch model.action(for: device) {
+    case .keep:
+      SlotLabel(icon: "equal", title: device.name, subtitle: keepSubtitle,
+                badge: device.format.badge, tint: .secondary)
+    case .replaceVST3(let target):
+      SlotLabel(icon: "checkmark.circle.fill", title: target.name,
+                subtitle: "keeps settings", badge: "VST3", tint: .green)
+    case .replaceAU(let au):
+      SlotLabel(icon: "exclamationmark.triangle.fill", title: au.name,
+                subtitle: "default settings", badge: "AU", tint: .orange)
+    }
+  }
+
+  private var keepSubtitle: String {
+    if case .unavailable(let why) = model.vst3Availability(of: device) { return why }
+    return "unchanged"
+  }
+
+  @ViewBuilder private var menuItems: some View {
+    Button("Keep original") { model.setAction(.keep, for: device) }
+    switch model.vst3Availability(of: device) {
+    case .available(let target):
+      Button("Convert to VST3 (keeps settings)") { model.setAction(.replaceVST3(target), for: device) }
+    case .unavailable(let why):
+      Button("VST3: \(why)") {}.disabled(true)
+    case nil:
+      EmptyView()
+    }
+    Divider()
+    if let s = model.suggestedAU(for: device) {
+      Button("Match AU → \(s.name) (default settings)") { model.setAction(.replaceAU(s), for: device) }
+    }
+    Button("Choose Audio Unit… (default settings)") { choosingFor = device }
   }
 }
 
 struct DeviceCell: View {
   let device: Device
+  let flat: Bool
 
   var body: some View {
     HStack(spacing: 6) {
-      Spacer().frame(width: CGFloat(device.depth) * 14)
+      Spacer().frame(width: flat ? 0 : CGFloat(device.depth) * 14)
       Image(systemName: categoryIcon(device.category, isRack: device.isRack))
         .foregroundStyle(.secondary).frame(width: 16)
       if let badge = device.format.badge {
@@ -169,6 +222,9 @@ struct DeviceCell: View {
       }
       if !device.enabled {
         Text("off").font(.caption2).foregroundStyle(.tertiary)
+      }
+      if flat {
+        Text(device.trackName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
       }
     }
     .help(deviceTooltip(device))
@@ -205,14 +261,14 @@ struct FormatBadge: View {
 // MARK: - Choose AU sheet
 
 struct ChooseAUView: View {
-  @EnvironmentObject var model: ConverterModel
+  @EnvironmentObject var catalogs: PluginCatalogs
   let device: Device
   let onPick: (AudioUnitInfo) -> Void
   let onCancel: () -> Void
   @State private var query = ""
 
   private var results: [AudioUnitInfo] {
-    let all = model.catalog
+    let all = catalogs.audioUnits
     guard !query.isEmpty else { return all }
     let q = query.lowercased()
     return all.filter {
@@ -228,6 +284,11 @@ struct ChooseAUView: View {
         Button("Cancel") { onCancel() }.keyboardShortcut(.cancelAction)
       }
       .padding()
+
+      Text("Audio Units load at their default settings: this device's settings won't carry over.")
+        .font(.caption).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal).padding(.bottom, 8)
 
       TextField("Search Audio Units", text: $query)
         .textFieldStyle(.roundedBorder)

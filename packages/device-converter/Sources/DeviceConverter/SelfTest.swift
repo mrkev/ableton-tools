@@ -3,6 +3,60 @@ import Foundation
 /// Headless verification of the parse → convert → save → re-parse pipeline,
 /// used because the GUI can't be driven in CI. Run with `--selftest <file.als>`.
 enum SelfTest {
+  /// Discover a folder, scan every set, and check the fast scanner against the
+  /// DOM extractor (the code that actually converts). Returns a process exit code.
+  static func runLibrary(path: String) -> Int32 {
+    let url = URL(fileURLWithPath: path)
+    guard let root = LibraryDiscovery.classify(url) else {
+      print("no Live Sets in \(path)")
+      return 1
+    }
+    let projects = LibraryDiscovery.projects(for: root)
+    let sets = projects.flatMap(\.sets)
+    let catalog = Vst3Catalog.installed()
+    print("\(root): \(projects.count) projects, \(sets.count) sets, \(catalog.count) VST3 classes")
+
+    var counts: [SetStatus.Kind: Int] = [:]
+    var mismatches = 0, unreadable = 0
+    var scanTime = 0.0, domTime = 0.0
+    for set in sets {
+      do {
+        var t = Date()
+        let scan = try LiveSetScanner.scan(url: set.url)
+        scanTime += Date().timeIntervalSince(t)
+        let converted = set.convertedURL.flatMap { try? LiveSetScanner.scan(url: $0) }
+        counts[SetStatus.resolve(
+          scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil,
+          catalog: catalog, catalogLoading: false).kind, default: 0] += 1
+
+        t = Date()
+        let doc = try AlsDocument(url: set.url)
+        let devices = DeviceExtractor.extractAll(doc.root)
+        domTime += Date().timeIntervalSince(t)
+        let fromDom = devices.filter { $0.format == .vst }.map(\.product).sorted()
+        let fromScan = scan.vst2.map(\.name).sorted()
+        let chunkDom = devices.filter { $0.format == .vst && Vst2State.isChunkPreset($0.element) }.count
+        if fromDom != fromScan || chunkDom != scan.vst2.filter(\.isChunk).count
+          || scan.creator != doc.creator
+          || devices.filter({ $0.format == .vst3 }).count != scan.vst3Count
+          || devices.filter({ $0.format == .au }).count != scan.auCount {
+          mismatches += 1
+          print("  ✗ \(set.url.lastPathComponent): scan \(fromScan.count) vst2/\(scan.vst3Count) vst3/\(scan.auCount) au"
+            + " vs DOM \(fromDom.count)/\(devices.filter { $0.format == .vst3 }.count)/\(devices.filter { $0.format == .au }.count)")
+        }
+      } catch {
+        unreadable += 1
+        print("  ✗ \(set.url.lastPathComponent): \(error)")
+      }
+    }
+    for kind in SetStatus.Kind.allCases where counts[kind] != nil {
+      print("  \(kind.title): \(counts[kind]!)")
+    }
+    print(String(format: "scan %.1fs, DOM %.1fs; %d mismatches, %d unreadable",
+                 scanTime, domTime, mismatches, unreadable))
+    return mismatches == 0 ? 0 : 1
+  }
+
   static func run(path: String) {
     do {
       let url = URL(fileURLWithPath: path)

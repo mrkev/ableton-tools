@@ -37,6 +37,9 @@ final class Device: Identifiable {
   let depth: Int
   let trackName: String
 
+  /// Only VST2/VST3 devices can be swapped for another plugin format.
+  var isConvertible: Bool { format == .vst || format == .vst3 }
+
   var vendor: String?
   var vstSdkVersion: String?
   var uniqueId: String?

@@ -20,31 +20,54 @@ struct Vst3Conversion {
   var warnings: [String]
 }
 
+/// Whether a VST2 device can be converted to VST3, and if not, why.
+enum Vst3Availability: Equatable {
+  case available(Vst3PluginInfo)
+  case unavailable(String)
+
+  static let noVst3 = "no native VST3 installed"
+  static let unsupportedPreset = "preset type not supported yet"
+  static let notCompatible = "its VST3 can't load VST2 settings"
+
+  /// Ignores the set's Live version: see `SetStatus.needsResave`.
+  static func resolve(_ plugin: LiveSetScan.Vst2Plugin, catalog: [Vst3PluginInfo]) -> Vst3Availability {
+    guard let target = Vst3Migration.target(uniqueId: plugin.uniqueId, name: plugin.name, in: catalog) else {
+      let lowered = plugin.name.lowercased()
+      return .unavailable(catalog.contains { $0.name.lowercased() == lowered } ? notCompatible : noVst3)
+    }
+    return plugin.isChunk ? .available(target) : .unavailable(unsupportedPreset)
+  }
+}
+
 enum Vst3MigrationError: Error, CustomStringConvertible {
   case notVst2
   case noState
   case unsupportedPreset(String)
+  case settingsNotCarried(String)
 
   var description: String {
     switch self {
     case .notVst2: return "not a VST2 device"
     case .noState: return "no saved VST2 state found"
     case .unsupportedPreset(let t): return "'\(t)' presets can't be carried over yet (only chunk presets)"
+    case .settingsNotCarried(let what): return "settings didn't carry over: \(what)"
     }
   }
 }
 
 enum Vst3Migration {
-  /// The installed VST3 meant to replace this VST2 device: the class with the
-  /// VST2-compatible id first, then an exact (case-insensitive) name match.
+  /// The installed VST3 that declares it replaces this VST2 device, through the
+  /// VST2-compatible class id. A VST3 that merely shares the name doesn't qualify:
+  /// it can report success loading a VST2 chunk while ignoring it (Melda's do).
   static func target(for device: Device, in catalog: [Vst3PluginInfo]) -> Vst3PluginInfo? {
     guard device.format == .vst else { return nil }
-    if let uid = vst2UniqueId(device) {
-      let want = Vst3Uid.vst2Compatible(uniqueId: uid, name: device.product)
-      if let hit = catalog.first(where: { $0.cid == want }) { return hit }
-    }
-    let name = device.product.lowercased()
-    return catalog.first { $0.name.lowercased() == name }
+    return target(uniqueId: vst2UniqueId(device), name: device.product, in: catalog)
+  }
+
+  static func target(uniqueId: Int32?, name: String, in catalog: [Vst3PluginInfo]) -> Vst3PluginInfo? {
+    guard let uniqueId else { return nil }
+    let want = Vst3Uid.vst2Compatible(uniqueId: uniqueId, name: name)
+    return catalog.first { $0.cid == want }
   }
 
   static func vst2UniqueId(_ device: Device) -> Int32? {
@@ -65,7 +88,7 @@ enum Vst3Migration {
       throw Vst3MigrationError.unsupportedPreset(state.type)
     }
 
-    let defaults = try Vst3Instance(target).parameters
+    let defaults = try defaultParameters(of: target)
     let plugin = try Vst3Instance(target)
     try plugin.setState(wrapped)
     let params = plugin.parameters
@@ -108,9 +131,11 @@ enum Vst3Migration {
         || (slot.automationTarget.map(automatedTargets.contains) ?? false)
       mapping.append("#\(slot.index) '\(slot.name)' → id \(match.id) '\(match.title)'"
         + (automated ? " (automated)" : ""))
-      // Cross-check the loaded value against what Live last saw.
+      // Cross-check the loaded value against what Live last saw. A difference
+      // means the plugin didn't really take the state, so keep the VST2 device.
       if !automated, let live = slot.value, abs(match.normalized - live) > 0.01 {
-        warnings.append(String(format: "'%@' loads as %.3f but Live had %.3f", slot.name, match.normalized, live))
+        throw Vst3MigrationError.settingsNotCarried(
+          String(format: "'%@' loads as %.3f but Live had %.3f", slot.name, match.normalized, live))
       }
     }
 
@@ -123,6 +148,15 @@ enum Vst3Migration {
       changedFromDefault: changed,
       parameterCount: params.count,
       warnings: warnings)
+  }
+
+  private static var defaultsCache: [[UInt8]: [Vst3Instance.Parameter]] = [:]
+
+  private static func defaultParameters(of target: Vst3PluginInfo) throws -> [Vst3Instance.Parameter] {
+    if let cached = defaultsCache[target.cid] { return cached }
+    let parameters = try Vst3Instance(target).parameters
+    defaultsCache[target.cid] = parameters
+    return parameters
   }
 
   struct ConfiguredSlot {

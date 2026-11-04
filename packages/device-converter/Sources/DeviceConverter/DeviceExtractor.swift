@@ -9,7 +9,7 @@ enum DeviceExtractor {
   ]
 
   private static let trackTags = [
-    "MidiTrack", "AudioTrack", "ReturnTrack", "GroupTrack",
+    "MidiTrack", "AudioTrack", "ReturnTrack", "GroupTrack", "MasterTrack", "PreHearTrack",
   ]
 
   // MARK: Extraction

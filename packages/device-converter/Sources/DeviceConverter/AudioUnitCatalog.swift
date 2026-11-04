@@ -2,13 +2,17 @@ import AVFoundation
 import Foundation
 
 /// An Audio Unit installed on this Mac, with the component codes Ableton needs.
-struct AudioUnitInfo: Identifiable, Hashable {
-  let id = UUID()
+struct AudioUnitInfo: Identifiable, Hashable, Codable {
+  var id = UUID()
   let name: String
   let manufacturer: String
   let typeCode: OSType
   let subTypeCode: OSType
   let manufacturerCode: OSType
+
+  private enum CodingKeys: String, CodingKey {
+    case name, manufacturer, typeCode, subTypeCode, manufacturerCode
+  }
 
   /// FourCC strings (for display / .als serialization).
   var typeFourCC: String { AudioUnitCatalog.fourCC(typeCode) }

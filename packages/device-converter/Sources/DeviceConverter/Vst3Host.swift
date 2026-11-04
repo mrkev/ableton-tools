@@ -2,7 +2,7 @@ import CVst3Host
 import Foundation
 
 /// An installed VST3 audio-module class.
-struct Vst3PluginInfo: Hashable {
+struct Vst3PluginInfo: Hashable, Codable {
   let bundleURL: URL
   /// 16-byte class id (TUID), as the factory reports it.
   let cid: [UInt8]
@@ -56,23 +56,26 @@ enum Vst3Catalog {
   /// this process. Bundles without a slice for this CPU are skipped — which is
   /// exactly the filter we want: a native Live can't load them either.
   static func installed() -> [Vst3PluginInfo] {
+    bundles().flatMap(classes(in:))
+  }
+
+  /// Loads the bundle's code, so call this on the main thread (plugins expect it).
+  static func classes(in bundle: URL) -> [Vst3PluginInfo] {
     var out: [Vst3PluginInfo] = []
-    for bundle in bundles() {
-      var classes = [v3_class_info](repeating: v3_class_info(), count: 64)
-      let n = Int(v3_list_classes(bundle.path, &classes, Int32(classes.count)))
-      guard n > 0 else { continue }
-      for var c in classes.prefix(min(n, classes.count)) {
-        let category = withUnsafeBytes(of: &c.category) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
-        guard category == "Audio Module Class" else { continue }
-        let name = withUnsafeBytes(of: &c.name) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
-        let cid = withUnsafeBytes(of: &c.cid) { Array($0) }
-        out.append(Vst3PluginInfo(bundleURL: bundle, cid: cid, name: name, category: category))
-      }
+    var classes = [v3_class_info](repeating: v3_class_info(), count: 64)
+    let n = Int(v3_list_classes(bundle.path, &classes, Int32(classes.count)))
+    guard n > 0 else { return [] }
+    for var c in classes.prefix(min(n, classes.count)) {
+      let category = withUnsafeBytes(of: &c.category) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+      guard category == "Audio Module Class" else { continue }
+      let name = withUnsafeBytes(of: &c.name) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+      let cid = withUnsafeBytes(of: &c.cid) { Array($0) }
+      out.append(Vst3PluginInfo(bundleURL: bundle, cid: cid, name: name, category: category))
     }
     return out
   }
 
-  private static func bundles() -> [URL] {
+  static func bundles() -> [URL] {
     let fm = FileManager.default
     var out: [URL] = []
     for dir in searchDirectories {

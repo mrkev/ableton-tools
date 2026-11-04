@@ -15,7 +15,26 @@ enum DeviceConverterApp {
       exit(Vst3Cli.run(arguments: args))
     }
 
-    let model = ConverterModel()
+    // A batch started from the GUI runs here, in a child process.
+    if args.contains("--batch-worker") {
+      Task { @MainActor in exit(await BatchWorker.run()) }
+      RunLoop.main.run()
+    }
+    // Headless batch conversion: --batch <folder> --out-dir <dir>
+    if args.contains("--batch") {
+      Task { @MainActor in exit(await BatchCli.run(arguments: args)) }
+      RunLoop.main.run()
+    }
+    // Headless check of library discovery and scanning.
+    if let i = args.firstIndex(of: "--selftest-library"), i + 1 < args.count {
+      exit(SelfTest.runLibrary(path: args[i + 1]))
+    }
+
+    let model = AppModel()
+    // `DeviceConverter <path>` opens a library, project folder or set on launch.
+    if let path = args.dropFirst().first(where: { !$0.hasPrefix("-") }) {
+      model.open(url: URL(fileURLWithPath: path))
+    }
     let application = NSApplication.shared
     // NSApplication.delegate is weak; the local binding keeps it alive because
     // run() blocks until the app quits.
@@ -28,21 +47,21 @@ enum DeviceConverterApp {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  let model: ConverterModel
+  let model: AppModel
   var window: NSWindow!
 
-  init(model: ConverterModel) {
+  init(model: AppModel) {
     self.model = model
     super.init()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    let root = ContentView().environmentObject(model)
+    let root = RootView().environmentObject(model).environmentObject(model.catalogs)
     window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
+      contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered, defer: false)
-    window.title = "Ableton Device Converter"
+    window.title = "Device Converter"
     window.center()
     window.setFrameAutosaveName("MainWindow")
     window.contentView = NSHostingView(rootView: root)
@@ -54,7 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
   @objc func openDocument() { model.presentOpenPanel() }
-  @objc func saveDocument() { model.presentSavePanel() }
+  @objc func saveDocument() { model.activeModel?.presentSavePanel() }
+  @objc func rescanLibrary() { model.rescan() }
 
   private func buildMenu() {
     let mainMenu = NSMenu()
@@ -75,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let save = fileMenu.addItem(
       withTitle: "Save As…", action: #selector(saveDocument), keyEquivalent: "s")
     save.target = self
+    fileMenu.addItem(.separator())
+    let rescan = fileMenu.addItem(
+      withTitle: "Rescan", action: #selector(rescanLibrary), keyEquivalent: "r")
+    rescan.target = self
     fileItem.submenu = fileMenu
 
     NSApp.mainMenu = mainMenu
