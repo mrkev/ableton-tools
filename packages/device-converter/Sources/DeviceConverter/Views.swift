@@ -179,6 +179,7 @@ struct DeviceRow: View {
   }
 
   private var keepSubtitle: String {
+    if model.loadsNativelyAsVst2(device) { return "already native" }
     if case .unavailable(let why) = model.vst3Availability(of: device) { return why }
     return "unchanged"
   }

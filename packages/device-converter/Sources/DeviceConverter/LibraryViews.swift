@@ -199,11 +199,10 @@ private struct StatusIcon: View {
 extension SetStatus.Kind {
   fileprivate var tint: Color {
     switch self {
-    case .ready, .converted: return .green
-    case .partial: return .yellow
-    case .needsResave: return .orange
-    case .blocked, .failed: return .red
-    case .scanning, .clean: return .secondary
+    case .afterConverting, .converted, .opens: return .green
+    case .resaveFirst: return .orange
+    case .stuck, .failed: return .red
+    case .scanning: return .secondary
     }
   }
 }
@@ -250,13 +249,12 @@ private struct LibrarySummaryView: View {
           }
         }
 
-        let ready = sets.filter { app.status(of: $0).kind == .ready }
-        let partial = sets.filter { app.status(of: $0).kind == .partial }
-        if !ready.isEmpty || !partial.isEmpty {
+        let candidates = app.batchCandidates(in: sets)
+        if !candidates.isEmpty {
           Button("Convert Sets to VST3…") { showingBatchSheet = true }
-            .disabled(app.isScanning || catalogs.isLoadingVst3)
+            .disabled(app.isScanning || catalogs.isLoading)
             .sheet(isPresented: $showingBatchSheet) {
-              BatchSheet(ready: ready, partial: partial) { chosen, destination in
+              BatchSheet(candidates: candidates) { chosen, destination in
                 showingBatchSheet = false
                 app.startBatch(sets: chosen, destination: destination)
               } onCancel: {
@@ -268,7 +266,7 @@ private struct LibrarySummaryView: View {
         if !blocking.isEmpty {
           VStack(alignment: .leading, spacing: 10) {
             Text("Plugins holding sets back").font(.headline)
-            Text("Installing a native VST3 of the top plugins unblocks the most sets.")
+            Text("These have no native build that Live can use. A native update of the top ones frees the most sets.")
               .font(.caption).foregroundStyle(.secondary)
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
               GridRow {
@@ -301,16 +299,19 @@ private struct LibrarySummaryView: View {
 
 /// Chooses what a batch converts and where it writes.
 private struct BatchSheet: View {
-  let ready: [LiveSetEntry]
-  let partial: [LiveSetEntry]
+  let candidates: BatchCandidates
   let onStart: ([LiveSetEntry], BatchDestination) -> Void
   let onCancel: () -> Void
 
   @AppStorage("batchDestination") private var folderPath = ""
   @State private var includePartial = false
+  @State private var includeOptional = false
   @State private var besideOriginals = false
 
-  private var chosen: [LiveSetEntry] { ready + (includePartial ? partial : []) }
+  private var chosen: [LiveSetEntry] {
+    candidates.required + (includePartial ? candidates.partial : [])
+      + (includeOptional ? candidates.optional : [])
+  }
 
   private var destination: BatchDestination? {
     if besideOriginals { return .besideOriginals }
@@ -323,11 +324,19 @@ private struct BatchSheet: View {
         .font(.headline)
 
       VStack(alignment: .leading, spacing: 4) {
-        Text("\(ready.count) ready to convert")
-        if !partial.isEmpty {
-          Toggle("Also convert \(partial.count) partly convertible", isOn: $includePartial)
+        Text(candidates.required.isEmpty
+          ? "No sets need converting to open."
+          : "\(candidates.required.count) need converting to open")
+        if !candidates.partial.isEmpty {
+          Toggle("Also \(candidates.partial.count) stuck on other plugins", isOn: $includePartial)
             .toggleStyle(.checkbox)
-          Text("Those sets will still have VST2 devices with no VST3 replacement.")
+          Text("Converts what it can, but they still won't open fully.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        if !candidates.optional.isEmpty {
+          Toggle("Also \(candidates.optional.count) that already open", isOn: $includeOptional)
+            .toggleStyle(.checkbox)
+          Text("Their VST2 plugins are native, so this only moves them to VST3 for the future.")
             .font(.caption).foregroundStyle(.secondary)
         }
       }

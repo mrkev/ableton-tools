@@ -102,6 +102,15 @@ final class ConverterModel: ObservableObject {
       catalog: catalogs.vst3)
   }
 
+  /// A VST2 device whose own build is native, so it loads without converting.
+  func loadsNativelyAsVst2(_ device: Device) -> Bool {
+    guard device.format == .vst, let inventory = catalogs.inventory else { return false }
+    let info = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")
+    return inventory.isNative(LiveSetScan.Vst2Plugin(
+      name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device),
+      isChunk: Vst2State.isChunkPreset(device.element), fileName: info?.childValue("FileName")))
+  }
+
   /// The installed AU whose name best matches this device (for auto-suggest).
   func suggestedAU(for device: Device) -> AudioUnitInfo? {
     let want = device.product.lowercased()

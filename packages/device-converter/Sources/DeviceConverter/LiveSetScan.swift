@@ -7,12 +7,26 @@ struct LiveSetScan: Codable, Sendable, Equatable {
     let uniqueId: Int32?
     /// Holds a chunk (`FBCh`) preset, the only kind that converts to VST3.
     let isChunk: Bool
+    /// The bundle Live loaded it from, e.g. "Serum.vst".
+    var fileName: String?
+  }
+
+  struct Vst3Plugin: Codable, Sendable, Hashable {
+    let name: String
+    let uid: [Int32]
+  }
+
+  struct AuPlugin: Codable, Sendable, Hashable {
+    let name: String
+    let type: Int32
+    let subType: Int32
+    let manufacturer: Int32
   }
 
   let creator: String
   let vst2: [Vst2Plugin]
-  let vst3Count: Int
-  let auCount: Int
+  let vst3: [Vst3Plugin]
+  let au: [AuPlugin]
 
   var predatesVst3: Bool { LiveVersion.predatesVst3(creator: creator) }
 }
@@ -37,7 +51,7 @@ enum LiveSetScanner {
       guard let base = raw.baseAddress else { throw AlsError.notALiveSet }
       let doc = Bytes(start: base, count: raw.count)
       guard let root = doc.find("<Ableton", from: 0) else { throw AlsError.notALiveSet }
-      let creator = doc.attribute("Creator=\"", from: root, before: doc.find(">", from: root) ?? root)
+      let creator = doc.attribute("Creator=", from: root, before: doc.find(">", from: root) ?? root)
 
       var plugins: [LiveSetScan.Vst2Plugin] = []
       var cursor = 0
@@ -45,16 +59,44 @@ enum LiveSetScanner {
         let end = doc.find("</VstPluginInfo>", from: start) ?? raw.count
         // `Dir` has a `Type` of its own, so look for the preset's after `VstPreset`.
         let preset = doc.find("<VstPreset", from: start, before: end)
-        let type = preset.flatMap { doc.attribute("<Type Value=\"", from: $0, before: end) }
+        let type = preset.flatMap { doc.attribute("<Type Value=", from: $0, before: end) }
         plugins.append(LiveSetScan.Vst2Plugin(
-          name: doc.attribute("<PlugName Value=\"", from: start, before: end) ?? "VST Plugin",
-          uniqueId: doc.attribute("<UniqueId Value=\"", from: start, before: end).flatMap { Int32($0) },
-          isChunk: type.flatMap { Int($0) }.flatMap(DeviceExtractor.fourCC) == "FBCh"))
+          name: doc.attribute("<PlugName Value=", from: start, before: end) ?? "VST Plugin",
+          uniqueId: doc.attribute("<UniqueId Value=", from: start, before: end).flatMap { Int32($0) },
+          isChunk: type.flatMap { Int($0) }.flatMap(DeviceExtractor.fourCC) == "FBCh",
+          fileName: doc.attribute("<FileName Value=", from: start, before: end)))
         cursor = end
       }
-      return LiveSetScan(
-        creator: creator ?? "", vst2: plugins,
-        vst3Count: doc.count("<Vst3PluginInfo"), auCount: doc.count("<AuPluginInfo"))
+
+      // The identity of these sits outside their `Preset`, which has its own `Name`.
+      var vst3: [LiveSetScan.Vst3Plugin] = []
+      cursor = 0
+      while let start = doc.find("<Vst3PluginInfo", from: cursor) {
+        let end = doc.find("</Vst3PluginInfo>", from: start) ?? raw.count
+        let identity = doc.find("</Preset>", from: start, before: end) ?? start
+        vst3.append(LiveSetScan.Vst3Plugin(
+          name: doc.attribute("<Name Value=", from: identity, before: end) ?? "VST3 Plugin",
+          uid: (0..<4).compactMap { i in
+            doc.attribute("<Fields.\(i) Value=", from: identity, before: end).flatMap { Int32($0) }
+          }))
+        cursor = end
+      }
+
+      var au: [LiveSetScan.AuPlugin] = []
+      cursor = 0
+      while let start = doc.find("<AuPluginInfo", from: cursor) {
+        let end = doc.find("</AuPluginInfo>", from: start) ?? raw.count
+        let limit = doc.find("<Preset", from: start, before: end) ?? end
+        func code(_ tag: String) -> Int32 {
+          doc.attribute("<\(tag) Value=", from: start, before: limit).flatMap { Int32($0) } ?? 0
+        }
+        au.append(LiveSetScan.AuPlugin(
+          name: doc.attribute("<Name Value=", from: start, before: limit) ?? "AU Plugin",
+          type: code("ComponentType"), subType: code("ComponentSubType"),
+          manufacturer: code("ComponentManufacturer")))
+        cursor = end
+      }
+      return LiveSetScan(creator: creator ?? "", vst2: plugins, vst3: vst3, au: au)
     }
   }
 
@@ -70,22 +112,21 @@ enum LiveSetScanner {
       }
     }
 
-    /// The text from just after `prefix` up to the closing quote, XML-unescaped.
+    /// The quoted text just after `prefix` (e.g. `<Name Value=`), XML-unescaped.
+    /// Live writes double quotes, but attributes created through XMLDocument can
+    /// come out single-quoted.
     func attribute(_ prefix: String, from: Int, before limit: Int) -> String? {
       guard limit > from, let hit = find(prefix, from: from, before: limit) else { return nil }
-      let valueStart = hit + prefix.utf8.count
-      guard let close = find("\"", from: valueStart, before: limit) else { return nil }
+      let quoteAt = hit + prefix.utf8.count
+      guard quoteAt < limit else { return nil }
+      let quote = start.load(fromByteOffset: quoteAt, as: UInt8.self)
+      guard quote == UInt8(ascii: "\"") || quote == UInt8(ascii: "'") else { return nil }
+      let valueStart = quoteAt + 1
+      guard let close = find(quote == UInt8(ascii: "\"") ? "\"" : "'", from: valueStart, before: limit) else {
+        return nil
+      }
       let bytes = UnsafeRawBufferPointer(start: start + valueStart, count: close - valueStart)
       return String(decoding: bytes, as: UTF8.self).xmlUnescaped
-    }
-
-    func count(_ needle: String) -> Int {
-      var n = 0, cursor = 0
-      while let hit = find(needle, from: cursor) {
-        n += 1
-        cursor = hit + needle.utf8.count
-      }
-      return n
     }
   }
 }
@@ -115,7 +156,7 @@ struct LiveSetScanCache {
   /// Bump when `LiveSetScan`'s meaning changes.
   private static let fileURL = FileManager.default
     .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("DeviceConverter/live-set-scans-v1.json")
+    .appendingPathComponent("DeviceConverter/live-set-scans-v2.json")
 
   static func load() -> LiveSetScanCache {
     var cache = LiveSetScanCache()

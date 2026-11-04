@@ -11,12 +11,19 @@ references a plugin your Live can't load will open again:
   at its default settings).
 
 Open a folder of projects, a project folder or a single `.als`: File › Open works
-out which from what you pick. Folders get a sidebar of projects and sets, each with
-a migration status (ready, partly convertible, blocked, needs re-saving, converted,
-nothing to do), and a summary of the plugins holding the most sets back. Statuses
-come from a fast byte scan of each set, cached by file date and size; File › Rescan
-picks up changes. A `<name>-vst3.als` beside a set marks it converted instead of
-being listed as more work, unless the original has changed since.
+out which from what you pick. Folders get a sidebar of projects and sets, each saying
+whether it will open in a native (Apple Silicon) Live:
+
+- **Opens natively** — every plugin, in any format, has an arm64 build.
+- **Opens after converting** — needs Intel-only VST2 devices replaced by native VST3s.
+- **Re-save, then convert** — the same, but saved by Live 9. (A Live 9 set that needs
+  no conversion just opens; Live upgrades it.)
+- **Stuck on plugins** — uses a plugin with no native build Live can use. The summary
+  ranks these plugins by how many sets each holds back.
+- **Converted** — a current `<name>-vst3.als` beside the set opens natively.
+
+Statuses come from a fast byte scan of each set, cached by file date and size; File ›
+Rescan picks up changes.
 
 A set opens in two columns:
 
@@ -71,10 +78,12 @@ index-compatible.
 
 ```sh
 swift run DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals) \\
-  [--include-partial] [--dry-run]
+  [--include-partial] [--include-native] [--dry-run]
 ```
 
-There's no default destination. `--out-dir` writes under `<dir>/<project folder>/`
+By default this converts only sets that need it to open. `--include-partial` adds sets
+stuck on other plugins, and `--include-native` adds sets that already open but could
+move their VST2 devices to VST3. There's no default destination. `--out-dir` writes under `<dir>/<project folder>/`
 and leaves project folders alone; `--beside-originals` writes into each project
 folder, where the library marks the set converted. Originals are only read, existing
 outputs are skipped (so an interrupted run can be run again), and each output is
@@ -150,6 +159,7 @@ standalone SwiftPM package that happens to live under `packages/`.
 | `ConverterModel.swift` | one open set: its DOM, slots, auto-suggest, save |
 | `Library.swift` | folder discovery and the `SetStatus` rule |
 | `LiveSetScan.swift` | fast scan of a set's plugins, and its on-disk cache |
+| `PluginInventory.swift` | what's installed in each format, and which builds are native |
 | `Views.swift` | the two-column device view for one set |
 | `LibraryViews.swift` | root view, sidebar and summary pane |
 | `App.swift` | AppKit bootstrap + menu |

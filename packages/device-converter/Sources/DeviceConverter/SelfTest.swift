@@ -13,10 +13,12 @@ enum SelfTest {
     }
     let projects = LibraryDiscovery.projects(for: root)
     let sets = projects.flatMap(\.sets)
-    let catalog = Vst3Catalog.installed()
-    print("\(root): \(projects.count) projects, \(sets.count) sets, \(catalog.count) VST3 classes")
+    let inventory = PluginInventory.loadNow()
+    print("\(root): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
 
     var counts: [SetStatus.Kind: Int] = [:]
+    var stuckSets: [String: Set<URL>] = [:]
+    var reasons: [String: String] = [:]
     var mismatches = 0, unreadable = 0
     var scanTime = 0.0, domTime = 0.0
     for set in sets {
@@ -25,24 +27,37 @@ enum SelfTest {
         let scan = try LiveSetScanner.scan(url: set.url)
         scanTime += Date().timeIntervalSince(t)
         let converted = set.convertedURL.flatMap { try? LiveSetScanner.scan(url: $0) }
-        counts[SetStatus.resolve(
-          scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil,
-          catalog: catalog, catalogLoading: false).kind, default: 0] += 1
+        let status = SetStatus.resolve(
+          scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory)
+        counts[status.kind, default: 0] += 1
+        if case .stuck(let plugins, _) = status {
+          for p in plugins {
+            stuckSets[p.name, default: []].insert(set.url)
+            reasons[p.name] = p.reason
+          }
+        }
 
         t = Date()
         let doc = try AlsDocument(url: set.url)
         let devices = DeviceExtractor.extractAll(doc.root)
         domTime += Date().timeIntervalSince(t)
-        let fromDom = devices.filter { $0.format == .vst }.map(\.product).sorted()
-        let fromScan = scan.vst2.map(\.name).sorted()
+        func names(_ format: DeviceFormat) -> [String] {
+          devices.filter { $0.format == format }.map(\.product).sorted()
+        }
         let chunkDom = devices.filter { $0.format == .vst && Vst2State.isChunkPreset($0.element) }.count
-        if fromDom != fromScan || chunkDom != scan.vst2.filter(\.isChunk).count
-          || scan.creator != doc.creator
-          || devices.filter({ $0.format == .vst3 }).count != scan.vst3Count
-          || devices.filter({ $0.format == .au }).count != scan.auCount {
+        let uidsDom = devices.compactMap(\.vst3Uid).map { $0.map(String.init).joined(separator: ",") }.sorted()
+        let uidsScan = scan.vst3.map { $0.uid.map(String.init).joined(separator: ",") }.sorted()
+        let auDom = devices.filter { $0.format == .au }.map { "\($0.auType ?? "")/\($0.auSubType ?? "")/\($0.auManufacturer ?? "")" }.sorted()
+        let auScan = scan.au.map { p in
+          [p.type, p.subType, p.manufacturer].map { DeviceExtractor.fourCC(Int($0)) ?? "" }.joined(separator: "/")
+        }.sorted()
+        if names(.vst) != scan.vst2.map(\.name).sorted() || chunkDom != scan.vst2.filter(\.isChunk).count
+          || names(.vst3) != scan.vst3.map(\.name).sorted() || uidsDom != uidsScan
+          || names(.au) != scan.au.map(\.name).sorted() || auDom != auScan
+          || scan.creator != doc.creator {
           mismatches += 1
-          print("  ✗ \(set.url.lastPathComponent): scan \(fromScan.count) vst2/\(scan.vst3Count) vst3/\(scan.auCount) au"
-            + " vs DOM \(fromDom.count)/\(devices.filter { $0.format == .vst3 }.count)/\(devices.filter { $0.format == .au }.count)")
+          print("  ✗ \(set.url.lastPathComponent): scan \(scan.vst2.count)/\(scan.vst3.count)/\(scan.au.count)"
+            + " vs DOM \(names(.vst).count)/\(names(.vst3).count)/\(names(.au).count)")
         }
       } catch {
         unreadable += 1
@@ -51,6 +66,9 @@ enum SelfTest {
     }
     for kind in SetStatus.Kind.allCases where counts[kind] != nil {
       print("  \(kind.title): \(counts[kind]!)")
+    }
+    for (name, urls) in stuckSets.sorted(by: { ($0.value.count, $1.key) > ($1.value.count, $0.key) }) {
+      print("  stuck: \(urls.count) sets on \(name) (\(reasons[name] ?? ""))")
     }
     print(String(format: "scan %.1fs, DOM %.1fs; %d mismatches, %d unreadable",
                  scanTime, domTime, mismatches, unreadable))

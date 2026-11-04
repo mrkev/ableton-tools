@@ -57,15 +57,17 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
 - [x] **VST2 → VST3 in the GUI** — a "Convert to VST3" slot action next to the
       AU one.
 - [x] **Project library** — open a folder of projects, see each set's status.
+- [x] **Native status** — whether each set opens in a native Live, across VST2, VST3
+      and AU.
 - [x] **VST2 → VST3: batch conversion** from the library or `--batch`.
 - [ ] **Check a batch's output in Live** before writing beside the originals.
 - [ ] **Run single-set Save As through the batch worker** too. It still hosts plugins
       in the app, so it crawls if the window is hidden and a plugin crash takes the
       app down.
-- [ ] **Try `--force` on a Live 9 set**, then open the result in Live 11. If it
-      works, the 31 sets that need re-saving can join batch conversion.
-- [ ] **Find native VST3s for the top blockers** — AMBEO Orbit (32 sets), LFOTool
-      (30), SerumFX (27). The library's "Plugins holding sets back" has the full list.
+- [ ] **Try `--force` on a Live 9 set**, then open the result in Live 11. Only matters
+      for sets that need converting; Live 9 sets with native plugins already open.
+- [ ] **Find native builds of the top blockers** — Massive (97 sets), AMBEO Orbit (45),
+      FabFilter Pro-C (40). The library's "Plugins holding sets back" has the full list.
 - [ ] **Check in Live**: Save As from inside the library, and whether a converted
       `MLoudnessAnalyzer` (the first non-Serum conversion) sounds right.
 - [ ] **VST2 → VST3: `FxCk` presets** — Live's program dumps (28-byte name +

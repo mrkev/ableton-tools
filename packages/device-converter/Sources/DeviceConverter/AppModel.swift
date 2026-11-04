@@ -10,23 +10,23 @@ final class PluginCatalogs: ObservableObject {
   @Published private(set) var isLoadingAudioUnits = true
   @Published private(set) var vst3: [Vst3PluginInfo] = []
   @Published private(set) var isLoadingVst3 = true
+  /// Everything installed, once all of it is known.
+  @Published private(set) var inventory: PluginInventory?
   /// A save or batch is converting. Only one conversion runs at a time, and the
   /// UI that could start another is disabled meanwhile.
   @Published var isHostingPlugins = false
 
-  var isLoading: Bool { isLoadingAudioUnits || isLoadingVst3 }
+  var isLoading: Bool { inventory == nil }
 
   init() {
-    Task.detached(priority: .userInitiated) {
-      let units = AudioUnitCatalog.installed()
-      await MainActor.run {
-        self.audioUnits = units
-        self.isLoadingAudioUnits = false
-      }
-    }
-    // On the main actor (plugins expect their code to load on the main thread),
-    // yielding between bundles so the window stays responsive.
     Task {
+      let others = await Task.detached(priority: .userInitiated) {
+        (AudioUnitCatalog.installed(), PluginInventory.vst2Bundles(), PluginInventory.vst3BundleArchitectures())
+      }.value
+      audioUnits = others.0
+      isLoadingAudioUnits = false
+      // On the main actor (plugins expect their code to load on the main thread),
+      // yielding between bundles so the window stays responsive.
       var found: [Vst3PluginInfo] = []
       for bundle in Vst3Catalog.bundles() {
         found += Vst3Catalog.classes(in: bundle)
@@ -34,6 +34,7 @@ final class PluginCatalogs: ObservableObject {
       }
       vst3 = found
       isLoadingVst3 = false
+      inventory = PluginInventory(vst3: found, vst3Bundles: others.2, vst2Files: others.1, audioUnits: others.0)
     }
   }
 }
@@ -51,6 +52,18 @@ struct BlockingPlugin: Identifiable {
   var sets: Int
   var instances: Int
   var id: String { name }
+}
+
+/// What a batch could convert within some sets.
+struct BatchCandidates {
+  /// Need converting to open.
+  var required: [LiveSetEntry] = []
+  /// Could convert some devices, but stay stuck on other plugins.
+  var partial: [LiveSetEntry] = []
+  /// Already open, with VST2 devices that could move to VST3 anyway.
+  var optional: [LiveSetEntry] = []
+
+  var isEmpty: Bool { required.isEmpty && partial.isEmpty && optional.isEmpty }
 }
 
 /// What's open: a library or project (with its sets' statuses), or a single set.
@@ -81,10 +94,10 @@ final class AppModel: ObservableObject {
   var allSets: [LiveSetEntry] { projects.flatMap(\.sets) }
 
   init() {
-    // Statuses depend on which VST3s are installed, which takes a moment to learn.
+    // Statuses depend on what's installed, which takes a moment to learn.
     catalogWatcher = Task { [weak self] in
-      guard let values = self?.catalogs.$isLoadingVst3.values else { return }
-      for await loading in values where !loading {
+      guard let values = self?.catalogs.$inventory.values else { return }
+      for await inventory in values where inventory != nil {
         self?.recomputeStatuses()
         break
       }
@@ -257,10 +270,11 @@ final class AppModel: ObservableObject {
       if let why = scanFailures[set.url] {
         out[set.url] = .failed(why)
       } else if let scan = scans[set.url] {
-        out[set.url] = SetStatus.resolve(
-          scan: scan, convertedScan: set.convertedURL.flatMap { scans[$0] },
-          hasConversion: set.convertedURL != nil,
-          catalog: catalogs.vst3, catalogLoading: catalogs.isLoadingVst3)
+        out[set.url] = catalogs.inventory.map {
+          SetStatus.resolve(
+            scan: scan, convertedScan: set.convertedURL.flatMap { scans[$0] },
+            hasConversion: set.convertedURL != nil, inventory: $0)
+        } ?? .scanning
       } else {
         out[set.url] = .scanning
       }
@@ -283,25 +297,36 @@ final class AppModel: ObservableObject {
 
   /// The most urgent status among a project's sets.
   func rollup(of project: ProjectEntry) -> SetStatus.Kind {
-    project.sets.map { status(of: $0).kind }.min() ?? .clean
+    project.sets.map { status(of: $0).kind }.min() ?? .opens
   }
 
-  /// Plugins that stop sets converting, most sets first. Sets awaiting a re-save
-  /// count too: they'll hit the same wall afterwards.
+  func batchCandidates(in sets: [LiveSetEntry]) -> BatchCandidates {
+    var out = BatchCandidates()
+    for set in sets {
+      switch status(of: set) {
+      case .afterConverting: out.required.append(set)
+      case .stuck(_, let convertible) where convertible > 0: out.partial.append(set)
+      case .opens(let convertible) where convertible > 0: out.optional.append(set)
+      default: break
+      }
+    }
+    return out
+  }
+
+  /// Plugins keeping sets from opening natively, most sets first.
   func blockingPlugins(in sets: [LiveSetEntry]) -> [BlockingPlugin] {
-    guard !catalogs.isLoadingVst3 else { return [] }
     var byName: [String: BlockingPlugin] = [:]
-    for set in sets where set.convertedURL == nil {
-      guard let scan = scans[set.url] else { continue }
+    for set in sets {
+      guard case .stuck(let plugins, _) = status(of: set) else { continue }
       var seen = Set<String>()
-      for plugin in scan.vst2 {
-        guard case .unavailable(let why) = Vst3Availability.resolve(plugin, catalog: catalogs.vst3) else {
-          continue
-        }
-        var row = byName[plugin.name] ?? BlockingPlugin(name: plugin.name, reason: why, sets: 0, instances: 0)
+      for plugin in plugins {
+        // Formats can name a plugin differently ("TapeStop", "Tape Stop").
+        let key = plugin.name.lowercased().filter { $0.isLetter || $0.isNumber }
+        var row = byName[key]
+          ?? BlockingPlugin(name: plugin.name, reason: plugin.reason, sets: 0, instances: 0)
         row.instances += 1
-        if seen.insert(plugin.name).inserted { row.sets += 1 }
-        byName[plugin.name] = row
+        if seen.insert(key).inserted { row.sets += 1 }
+        byName[key] = row
       }
     }
     return byName.values.sorted {

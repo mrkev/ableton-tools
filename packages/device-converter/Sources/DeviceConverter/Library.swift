@@ -110,48 +110,52 @@ enum LibraryDiscovery {
   }
 }
 
-/// Where a set stands in the VST2 → VST3 migration.
+/// Whether a set will open with all its plugins in a native (Apple Silicon) Live.
 enum SetStatus: Hashable {
   case scanning
   case failed(String)
-  /// No VST2 devices.
-  case clean
-  /// Every VST2 device can convert.
-  case ready(Int)
-  case partial(convertible: Int, blocked: Int)
-  case blocked(Int)
-  /// Saved by Live < 10; re-saving comes before anything else.
-  case needsResave(Int)
-  /// `<name>-vst3.als` is current, with this many VST2 devices left in it.
-  case converted(remaining: Int)
+  /// Every plugin has a native build. `convertible` VST2 devices could still move
+  /// to VST3, but don't need to.
+  case opens(convertible: Int)
+  /// Opens once these VST2 devices are converted.
+  case afterConverting(Int)
+  /// Saved by Live < 10, so `Int` devices can only convert after a re-save. A set
+  /// that needs no conversion just opens: Live upgrades it.
+  case resaveFirst(Int)
+  /// These plugins have nothing native. `convertible` other devices could convert,
+  /// but the set still wouldn't open fully.
+  case stuck([StuckPlugin], convertible: Int)
+  /// `<name>-vst3.als` is current and opens.
+  case converted
 
-  /// The one rule for a set's status, given its scan and the installed VST3s.
+  /// The one rule for a set's status.
   static func resolve(
-    scan: LiveSetScan, convertedScan: LiveSetScan?, hasConversion: Bool,
-    catalog: [Vst3PluginInfo], catalogLoading: Bool
+    scan: LiveSetScan, convertedScan: LiveSetScan?, hasConversion: Bool, inventory: PluginInventory
   ) -> SetStatus {
-    if hasConversion { return .converted(remaining: convertedScan?.vst2.count ?? 0) }
-    if scan.vst2.isEmpty { return .clean }
-    if scan.predatesVst3 { return .needsResave(scan.vst2.count) }
-    if catalogLoading { return .scanning }
-    let convertible = scan.vst2.filter {
-      if case .available = Vst3Availability.resolve($0, catalog: catalog) { return true }
+    if hasConversion {
+      guard let convertedScan else { return .scanning }
+      let stuck = inventory.stuckPlugins(in: convertedScan)
+      return stuck.isEmpty ? .converted : .stuck(stuck, convertible: 0)
+    }
+    let convertible = scan.predatesVst3 ? 0 : inventory.convertibleCount(in: scan)
+    let stuck = inventory.stuckPlugins(in: scan)
+    if !stuck.isEmpty { return .stuck(stuck, convertible: convertible) }
+    let needed = scan.vst2.filter {
+      if case .needsConversion = inventory.load($0) { return true }
       return false
     }.count
-    if convertible == scan.vst2.count { return .ready(convertible) }
-    if convertible == 0 { return .blocked(scan.vst2.count) }
-    return .partial(convertible: convertible, blocked: scan.vst2.count - convertible)
+    if needed > 0 { return scan.predatesVst3 ? .resaveFirst(needed) : .afterConverting(needed) }
+    return .opens(convertible: convertible)
   }
 
   var kind: Kind {
     switch self {
     case .scanning: return .scanning
     case .failed: return .failed
-    case .clean: return .clean
-    case .ready: return .ready
-    case .partial: return .partial
-    case .blocked: return .blocked
-    case .needsResave: return .needsResave
+    case .opens: return .opens
+    case .afterConverting: return .afterConverting
+    case .resaveFirst: return .resaveFirst
+    case .stuck: return .stuck
     case .converted: return .converted
     }
   }
@@ -161,59 +165,57 @@ enum SetStatus: Hashable {
     switch self {
     case .scanning: return "Scanning…"
     case .failed(let why): return "Couldn't read: \(why)"
-    case .clean: return "No VST2 devices"
-    case .ready(let n): return "\(n) VST2 ready to convert"
-    case .partial(let ok, let no): return "\(ok) VST2 ready, \(no) can't convert"
-    case .blocked(let n): return "\(n) VST2 can't convert"
-    case .needsResave(let n): return "\(n) VST2, re-save in Live 10+ first"
-    case .converted(let left): return left == 0 ? "Converted" : "Converted, \(left) VST2 left"
+    case .opens(let n):
+      return n == 0 ? "Opens natively" : "Opens natively; \(n) VST2 could still move to VST3"
+    case .afterConverting(let n): return "Opens after converting \(n) VST2"
+    case .resaveFirst(let n): return "Re-save in Live 10+, then convert \(n) VST2"
+    case .stuck(let plugins, _):
+      return "Stuck on " + Set(plugins.map(\.name)).sorted().joined(separator: ", ")
+    case .converted: return "Converted, and opens natively"
     }
   }
 
   /// Most urgent first; a project shows its first non-empty kind.
   enum Kind: Int, CaseIterable, Comparable {
-    case ready, partial, blocked, needsResave, failed, scanning, converted, clean
+    case afterConverting, resaveFirst, stuck, failed, scanning, converted, opens
 
     static func < (a: Kind, b: Kind) -> Bool { a.rawValue < b.rawValue }
 
-    var needsWork: Bool { [.ready, .partial, .blocked, .needsResave, .failed].contains(self) }
+    var needsWork: Bool { [.afterConverting, .resaveFirst, .stuck, .failed].contains(self) }
 
     var title: String {
       switch self {
-      case .ready: return "Ready to convert"
-      case .partial: return "Partly convertible"
-      case .blocked: return "Blocked"
-      case .needsResave: return "Needs re-saving"
+      case .afterConverting: return "Opens after converting"
+      case .resaveFirst: return "Re-save, then convert"
+      case .stuck: return "Stuck on plugins"
       case .failed: return "Couldn't read"
       case .scanning: return "Scanning"
       case .converted: return "Converted"
-      case .clean: return "Nothing to do"
+      case .opens: return "Opens natively"
       }
     }
 
     var explanation: String {
       switch self {
-      case .ready: return "Every VST2 device has a native VST3."
-      case .partial: return "Some VST2 devices have no usable VST3 yet."
-      case .blocked: return "None of the VST2 devices have a usable VST3 yet."
-      case .needsResave: return "Saved by Live 9. Open and re-save in Live 10+ to convert."
+      case .afterConverting: return "Needs VST2 devices replaced by their native VST3s."
+      case .resaveFirst: return "Saved by Live 9. Re-save in Live 10+, then convert."
+      case .stuck: return "Uses a plugin with no native build Live can use."
       case .failed: return "The file couldn't be read as a Live Set."
       case .scanning: return "Not checked yet."
-      case .converted: return "A current -vst3.als exists beside the set."
-      case .clean: return "No VST2 devices in the set."
+      case .converted: return "A current -vst3.als exists beside the set and opens natively."
+      case .opens: return "Every plugin has a native build. Nothing to do."
       }
     }
 
     var icon: String {
       switch self {
-      case .ready: return "arrow.right.circle.fill"
-      case .partial: return "circle.lefthalf.filled"
-      case .blocked: return "nosign"
-      case .needsResave: return "arrow.triangle.2.circlepath"
+      case .afterConverting: return "arrow.right.circle.fill"
+      case .resaveFirst: return "arrow.triangle.2.circlepath"
+      case .stuck: return "nosign"
       case .failed: return "exclamationmark.triangle.fill"
       case .scanning: return "ellipsis.circle"
       case .converted: return "checkmark.circle.fill"
-      case .clean: return "minus.circle"
+      case .opens: return "checkmark.circle"
       }
     }
   }

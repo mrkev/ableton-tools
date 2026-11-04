@@ -179,8 +179,8 @@ final class BatchRun {
     case .failure(let error):
       return .failed("couldn't write: \(error)")
     case .success(let scan):
-      guard scan.vst2.count == vst2Left, scan.vst3Count == vst3Before + toVst3,
-            scan.auCount == auBefore + toAU else {
+      guard scan.vst2.count == vst2Left, scan.vst3.count == vst3Before + toVst3,
+            scan.au.count == auBefore + toAU else {
         try? FileManager.default.removeItem(at: output)
         return .failed("output didn't verify, so it was removed")
       }
@@ -192,13 +192,16 @@ final class BatchRun {
 /// Headless batch conversion:
 ///
 ///     DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals)
-///                     [--include-partial] [--dry-run]
+///                     [--include-partial] [--include-native] [--dry-run]
+///
+/// Converts the sets that need it to open natively. `--include-partial` adds sets
+/// stuck on other plugins; `--include-native` adds sets that already open.
 ///
 /// There's deliberately no default destination: writing into project folders
 /// has to be asked for.
 enum BatchCli {
   private static let usage = "usage: DeviceConverter --batch <folder> "
-    + "(--out-dir <dir> | --beside-originals) [--include-partial] [--dry-run]"
+    + "(--out-dir <dir> | --beside-originals) [--include-partial] [--include-native] [--dry-run]"
 
   @MainActor static func run(arguments args: [String]) async -> Int32 {
     setlinebuf(stdout)
@@ -221,8 +224,9 @@ enum BatchCli {
       print("no projects found in \(folder.path)")
       return 1
     }
-    let catalog = Vst3Catalog.installed()
+    let inventory = PluginInventory.loadNow()
     let includePartial = args.contains("--include-partial")
+    let includeOptional = args.contains("--include-native")
     var jobs: [BatchJob] = []
     var unreadable = 0
     for set in LibraryDiscovery.projects(for: root).flatMap(\.sets) {
@@ -230,12 +234,16 @@ enum BatchCli {
         unreadable += 1
         continue
       }
-      let status = SetStatus.resolve(
-        scan: scan, convertedScan: nil, hasConversion: set.convertedURL != nil,
-        catalog: catalog, catalogLoading: false)
-      if status.kind == .ready || (includePartial && status.kind == .partial) {
-        jobs.append(BatchJob(set: set, choices: nil))
+      let converted = set.convertedURL.flatMap { try? LiveSetScanner.scan(url: $0) }
+      let wanted: Bool
+      switch SetStatus.resolve(
+        scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory) {
+      case .afterConverting: wanted = true
+      case .stuck(_, let convertible): wanted = includePartial && convertible > 0
+      case .opens(let convertible): wanted = includeOptional && convertible > 0
+      default: wanted = false
       }
+      if wanted { jobs.append(BatchJob(set: set, choices: nil)) }
     }
     print("\(jobs.count) set(s) to convert" + (unreadable > 0 ? ", \(unreadable) unreadable" : ""))
 
@@ -244,7 +252,7 @@ enum BatchCli {
       return 0
     }
 
-    let run = BatchRun(jobs: jobs, destination: destination, catalog: catalog)
+    let run = BatchRun(jobs: jobs, destination: destination, catalog: inventory.vst3)
     var converted = 0, skipped = 0, failed = 0
     run.onResult = { result in
       switch result.outcome {
