@@ -10,6 +10,10 @@ enum DeviceConverterApp {
       SelfTest.run(path: args[i + 1])
       return
     }
+    // Headless VST2 → VST3 migration: --vst3 <file.als> [--out <out.als>]
+    if args.contains("--vst3") {
+      exit(Vst3Cli.run(arguments: args))
+    }
 
     let model = ConverterModel()
     let application = NSApplication.shared

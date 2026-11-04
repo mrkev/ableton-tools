@@ -10,9 +10,14 @@ let package = Package(
       name: "CGzip",
       linkerSettings: [.linkedLibrary("z")]
     ),
+    // Minimal offline VST3 host (load bundle, push/pull state, list params).
+    .target(
+      name: "CVst3Host",
+      linkerSettings: [.linkedFramework("CoreFoundation")]
+    ),
     .executableTarget(
       name: "DeviceConverter",
-      dependencies: ["CGzip"],
+      dependencies: ["CGzip", "CVst3Host"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
   ]
