@@ -104,8 +104,11 @@ struct PluginInventory {
 
   func load(_ plugin: LiveSetScan.Vst3Plugin) -> PluginLoad {
     if plugin.uid.count == 4, vst3.contains(where: { $0.uidFields == plugin.uid }) { return .native }
-    let installed = vst3Bundles[Self.normalized(plugin.name)] != nil
-    return .stuck(reason: installed ? "VST3 is Intel only" : "VST3 not installed")
+    switch vst3Bundles[Self.normalized(plugin.name)] {
+    case true?: return .stuck(reason: "installed VST3 is a different plugin ID")
+    case false?: return .stuck(reason: "VST3 is Intel only")
+    case nil: return .stuck(reason: "VST3 not installed")
+    }
   }
 
   func load(_ plugin: LiveSetScan.AuPlugin) -> PluginLoad {

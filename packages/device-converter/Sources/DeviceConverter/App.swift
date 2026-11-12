@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Exits without running exit-time destructors. Loaded plugins stay in the process,
+/// and some crash tearing themselves down (Massive's Qt application does), which
+/// would lose buffered output and report a failure after the work has succeeded.
+func exitSkippingPluginTeardown(_ code: Int32) -> Never {
+  fflush(stdout)
+  fflush(stderr)
+  _exit(code)
+}
+
 @main
 enum DeviceConverterApp {
   @MainActor static func main() {
@@ -8,26 +17,26 @@ enum DeviceConverterApp {
     let args = CommandLine.arguments
     if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
       SelfTest.run(path: args[i + 1])
-      return
+      exitSkippingPluginTeardown(0)
     }
     // Headless VST2 → VST3 migration: --vst3 <file.als> [--out <out.als>]
     if args.contains("--vst3") {
-      exit(Vst3Cli.run(arguments: args))
+      exitSkippingPluginTeardown(Vst3Cli.run(arguments: args))
     }
 
     // A batch started from the GUI runs here, in a child process.
     if args.contains("--batch-worker") {
-      Task { @MainActor in exit(await BatchWorker.run()) }
+      Task { @MainActor in exitSkippingPluginTeardown(await BatchWorker.run()) }
       RunLoop.main.run()
     }
     // Headless batch conversion: --batch <folder> --out-dir <dir>
     if args.contains("--batch") {
-      Task { @MainActor in exit(await BatchCli.run(arguments: args)) }
+      Task { @MainActor in exitSkippingPluginTeardown(await BatchCli.run(arguments: args)) }
       RunLoop.main.run()
     }
     // Headless check of library discovery and scanning.
     if let i = args.firstIndex(of: "--selftest-library"), i + 1 < args.count {
-      exit(SelfTest.runLibrary(path: args[i + 1]))
+      exitSkippingPluginTeardown(SelfTest.runLibrary(path: args[i + 1]))
     }
 
     let model = AppModel()
@@ -69,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     buildMenu()
     NSApp.activate(ignoringOtherApps: true)
   }
+
+  func applicationWillTerminate(_ notification: Notification) { exitSkippingPluginTeardown(0) }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
