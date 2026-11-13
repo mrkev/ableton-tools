@@ -21,7 +21,8 @@ enum DeviceConverterApp {
     }
     // Headless VST2 → VST3 migration: --vst3 <file.als> [--out <out.als>]
     if args.contains("--vst3") {
-      exitSkippingPluginTeardown(Vst3Cli.run(arguments: args))
+      Task { @MainActor in exitSkippingPluginTeardown(await Vst3Cli.run(arguments: args)) }
+      RunLoop.main.run()
     }
 
     // A batch started from the GUI runs here, in a child process.
@@ -33,6 +34,10 @@ enum DeviceConverterApp {
     if args.contains("--batch") {
       Task { @MainActor in exitSkippingPluginTeardown(await BatchCli.run(arguments: args)) }
       RunLoop.main.run()
+    }
+    // Debugging aid: how a VST3 stores its state.
+    if args.contains("--probe-vst3") {
+      exitSkippingPluginTeardown(ProbeCli.run(arguments: args))
     }
     // Headless check of library discovery and scanning.
     if let i = args.firstIndex(of: "--selftest-library"), i + 1 < args.count {

@@ -37,8 +37,9 @@ final class Device: Identifiable {
   let depth: Int
   let trackName: String
 
-  /// Only VST2/VST3 devices can be swapped for another plugin format.
-  var isConvertible: Bool { format == .vst || format == .vst3 }
+  /// VST2/VST3 devices can be swapped for another plugin format, and AMBEO Orbit
+  /// (in any format) for dearVR MICRO.
+  var isConvertible: Bool { format == .vst || format == .vst3 || OrbitToMicro.isOrbit(self) }
 
   var vendor: String?
   var vstSdkVersion: String?

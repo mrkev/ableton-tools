@@ -10,8 +10,9 @@ final class AlsDocument {
   let xml: XMLDocument
   /// The root `<Ableton>` element.
   let root: XMLElement
-  /// The source's bytes before `<Ableton`, restored on save.
+  /// The source's bytes before `<Ableton` and after `</Ableton>`, restored on save.
   private let prolog: Data
+  private let epilog: Data
 
   /// Whitespace Live escapes in attributes (`Annotation` line breaks). XMLDocument
   /// serializes these as raw characters, which parsers read back as spaces, so
@@ -22,6 +23,7 @@ final class AlsDocument {
        Data(String(UnicodeScalar(UInt32(private_, radix: 16)!)!).utf8))
     }
   private static let rootTag = Data("<Ableton".utf8)
+  private static let rootEnd = Data("</Ableton>".utf8)
 
   init(url: URL) throws {
     self.sourceURL = url
@@ -29,6 +31,8 @@ final class AlsDocument {
     var xmlData = try Gzip.inflate(raw)
     guard let rootStart = xmlData.offset(of: Self.rootTag) else { throw AlsError.notALiveSet }
     self.prolog = xmlData.prefix(rootStart)
+    self.epilog = xmlData.lastOffset(of: Self.rootEnd).map { xmlData.suffix(from: xmlData.startIndex + $0 + Self.rootEnd.count) }
+      .map { Data($0) } ?? Data()
     for w in Self.escapedWhitespace { xmlData = xmlData.replacingBytes(w.entity, with: w.placeholder) }
     // Preserve whitespace/quoting so untouched nodes serialize back faithfully.
     let doc = try XMLDocument(data: xmlData, options: [.nodePreserveAll])
@@ -55,6 +59,9 @@ final class AlsDocument {
     for w in Self.escapedWhitespace { xmlData = xmlData.replacingBytes(w.utf8, with: w.entity) }
     if let rootStart = xmlData.offset(of: Self.rootTag) {
       xmlData.replaceSubrange(xmlData.startIndex..<(xmlData.startIndex + rootStart), with: prolog)
+    }
+    if let end = xmlData.lastOffset(of: Self.rootEnd) {
+      xmlData.replaceSubrange((xmlData.startIndex + end + Self.rootEnd.count)..., with: epilog)
     }
     return try Gzip.deflate(xmlData)
   }
@@ -86,6 +93,20 @@ private extension Data {
     }
   }
 
+  /// Offset of the last `target`, searching back from the end (it's near the end).
+  func lastOffset(of target: Data) -> Int? {
+    var from = Swift.max(0, count - 4096)
+    while true {
+      if let hit = offset(of: target, from: from) {
+        var last = hit
+        while let next = offset(of: target, from: last + 1) { last = next }
+        return last
+      }
+      guard from > 0 else { return nil }
+      from = Swift.max(0, from - 1 << 20)
+    }
+  }
+
   func replacingBytes(_ target: Data, with replacement: Data) -> Data {
     guard var hit = offset(of: target) else { return self }
     var out = Data()
@@ -106,6 +127,15 @@ private extension Data {
 // MARK: - XMLElement conveniences
 
 extension XMLElement {
+  /// A new element from text, quoted as written. Attributes made through
+  /// `XMLNode` serialize single-quoted, which Live never writes.
+  static func parsed(_ xml: String) throws -> XMLElement {
+    let doc = try XMLDocument(xmlString: xml, options: [.nodePreserveAll])
+    guard let root = doc.rootElement() else { throw AlsError.notALiveSet }
+    root.detach()
+    return root
+  }
+
   /// Direct child elements (skips text/whitespace nodes).
   var childElements: [XMLElement] {
     (children ?? []).compactMap { $0 as? XMLElement }

@@ -254,13 +254,18 @@ private struct LibrarySummaryView: View {
           Button("Convert Sets to VST3…") { showingBatchSheet = true }
             .disabled(app.isScanning || catalogs.isLoading)
             .sheet(isPresented: $showingBatchSheet) {
-              BatchSheet(candidates: candidates) { chosen, destination in
+              BatchSheet(candidates: candidates, replacesOrbit: catalogs.substituteOrbit) { chosen, destination in
                 showingBatchSheet = false
                 app.startBatch(sets: chosen, destination: destination)
               } onCancel: {
                 showingBatchSheet = false
               }
             }
+        }
+
+        let orbit = app.orbitUsage(in: sets)
+        if orbit.sets > 0 {
+          OrbitReplacementSection(sets: orbit.sets, devices: orbit.instances)
         }
 
         if !blocking.isEmpty {
@@ -298,8 +303,46 @@ private struct LibrarySummaryView: View {
 // MARK: - Batch
 
 /// Chooses what a batch converts and where it writes.
+/// The opt-in for replacing AMBEO Orbit with dearVR MICRO.
+private struct OrbitReplacementSection: View {
+  @EnvironmentObject var catalogs: PluginCatalogs
+  let sets: Int
+  let devices: Int
+
+  private var isInstalled: Bool {
+    [DeviceFormat.vst3, .au].contains {
+      OrbitToMicro.target(for: $0, vst3: catalogs.vst3, audioUnits: catalogs.audioUnits) != nil
+    }
+  }
+
+  private var explanation: String {
+    "AMBEO Orbit is in \(sets) \(sets == 1 ? "set" : "sets") (\(devices) \(devices == 1 ? "device" : "devices")). "
+      + "It's discontinued and Intel only. dearVR MICRO is its successor, and the settings carry over, "
+      + "but it doesn't sound the same: placement and tone shift, most at diagonal positions. Each MICRO "
+      + "uses its AMBEO Orbit HRTF at Focus 100, followed by a Utility that matches Orbit's loudness for "
+      + "that device."
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Replacements").font(.headline)
+      Toggle("Replace AMBEO Orbit with dearVR MICRO", isOn: $catalogs.substituteOrbit)
+        .toggleStyle(.checkbox)
+        .disabled(catalogs.isLoading || !isInstalled || catalogs.isHostingPlugins)
+      Text(explanation)
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: 560, alignment: .leading)
+      if !catalogs.isLoading && !isInstalled {
+        Text("Install dearVR MICRO to use this.").font(.caption).foregroundStyle(.orange)
+      }
+    }
+  }
+}
+
 private struct BatchSheet: View {
   let candidates: BatchCandidates
+  let replacesOrbit: Bool
   let onStart: ([LiveSetEntry], BatchDestination) -> Void
   let onCancel: () -> Void
 
@@ -364,6 +407,11 @@ private struct BatchSheet: View {
           Text("Project folders stay untouched, and the library won't mark these sets converted.")
             .font(.caption).foregroundStyle(.secondary)
         }
+      }
+
+      if replacesOrbit {
+        Text("AMBEO Orbit devices will be replaced with dearVR MICRO, which sounds different.")
+          .font(.caption).foregroundStyle(.orange)
       }
 
       Text("Originals are never changed, and existing output files are skipped.")
@@ -457,7 +505,7 @@ private struct BatchProgressView: View {
   }
 
   private func notes(of result: BatchSetResult) -> String {
-    if case .converted(let output, _, _, _, let notes) = result.outcome {
+    if case .converted(let output, _, _, _, _, let notes) = result.outcome {
       return ([output.path] + notes).joined(separator: "\n")
     }
     return result.summary

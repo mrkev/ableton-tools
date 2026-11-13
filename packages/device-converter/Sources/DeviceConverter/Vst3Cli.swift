@@ -1,16 +1,21 @@
 import Foundation
 
-/// Headless VST2 → VST3 migration of one Live Set:
+/// Headless VST2 → VST3 migration of one Live Set (plus Intel-only AUs built
+/// around a VST2 whose VST3 replaces them):
 ///
-///     DeviceConverter --vst3 <in.als> [--out <out.als>] [--dry-run] [--verbose] [--force]
+///     DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit]
+///                     [--dry-run] [--verbose] [--force]
 ///
 /// Converts every VST2 device that has an installed (and natively loadable)
 /// VST3 replacement, writes a new set (default: `<name>-vst3.als` beside the
 /// original — the original is never touched) and prints a per-device report.
+/// `--substitute-orbit` also replaces AMBEO Orbit with dearVR MICRO.
 enum Vst3Cli {
-  static func run(arguments args: [String]) -> Int32 {
+  @MainActor static func run(arguments args: [String]) async -> Int32 {
+    setlinebuf(stdout)
     guard let i = args.firstIndex(of: "--vst3"), i + 1 < args.count else {
-      print("usage: DeviceConverter --vst3 <in.als> [--out <out.als>] [--dry-run] [--verbose] [--force]")
+      print("usage: DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit]"
+        + " [--dry-run] [--verbose] [--force]")
       return 2
     }
     let input = URL(fileURLWithPath: args[i + 1])
@@ -28,19 +33,44 @@ enum Vst3Cli {
         return 3
       }
       let devices = DeviceExtractor.extractAll(doc.root)
-      let catalog = Vst3Catalog.installed()
+      var inventory = PluginInventory.loadNow()
+      inventory.substituteOrbit = args.contains("--substitute-orbit")
+      let catalog = inventory.vst3
       let automated = doc.automatedTargetIds
       print("\(input.lastPathComponent): \(devices.count) devices; \(catalog.count) loadable VST3 classes installed")
 
       var converted = 0, skipped = 0
-      for d in devices where d.format == .vst {
+      for d in devices where d.format == .vst || d.format == .au || OrbitToMicro.isOrbit(d) {
         let label = "\(d.trackName) › \(d.name)"
-        guard let target = Vst3Migration.target(for: d, in: catalog) else {
+        if OrbitToMicro.isOrbit(d), let target = inventory.orbitTarget(for: d.format) {
+          do {
+            let c = try await OrbitToMicro.convert(d, target: target, document: doc, automatedTargets: automated)
+            OrbitToMicro.apply(c, replacing: d)
+            print(String(format: "  ✓ %@ → dearVR MICRO %@ + Utility %+.2f dB", label, target.badge, c.gainDb))
+            for n in c.notes { print("      ⚠︎ \(n)") }
+            converted += 1
+          } catch {
+            print("  ✗ \(label): \(error)"); skipped += 1
+          }
+          continue
+        }
+        if OrbitToMicro.isOrbit(d) {
+          print("  – \(label): AMBEO Orbit; pass --substitute-orbit to replace it with dearVR MICRO"); skipped += 1
+          continue
+        }
+        let target: Vst3PluginInfo
+        if let au = LiveSetScan.AuPlugin(device: d) {
+          // Only AUs that need it; most have no VST3 counterpart at all.
+          guard case .needsConversion(let t) = inventory.load(au) else { continue }
+          target = t
+        } else if let t = Vst3Migration.target(for: d, in: catalog) {
+          target = t
+        } else {
           print("  – \(label): no installed native VST2-compatible VST3"); skipped += 1; continue
         }
         do {
           let c = try Vst3Migration.prepare(d, target: target, automatedTargets: automated)
-          print("  ✓ \(label) → \(target.name) VST3 · state \(c.processorState.count) B"
+          print("  ✓ \(label) (\(d.format.badge ?? "")) → \(target.name) VST3 · state \(c.processorState.count) B"
             + " · \(c.changedFromDefault)/\(c.parameterCount) params off default"
             + " · \(c.parameterMap.count) mapped slot(s)")
           if verbose { for m in c.mapping { print("      \(m)") } }
@@ -59,8 +89,8 @@ enum Vst3Cli {
       // Prove the result re-parses with the same device layout.
       let after = DeviceExtractor.extractAll(try AlsDocument(url: output).root)
       let vst3 = after.filter { $0.format == .vst3 }.count
-      print("wrote \(output.path) — re-parsed \(after.count) devices (\(vst3) VST3)"
-        + (after.count == devices.count ? "" : " ✗ device count changed!"))
+      let added = after.count - devices.count
+      print("wrote \(output.path) — re-parsed \(after.count) devices (\(vst3) VST3, \(added) added)")
       return 0
     } catch {
       print("error: \(error)")

@@ -9,7 +9,7 @@ struct ContentView: View {
   @State private var choosingFor: Device?
 
   private var visibleDevices: [Device] {
-    onlyConvertible ? model.devices.filter(\.isConvertible) : model.devices
+    onlyConvertible ? model.devices.filter(model.isConvertible) : model.devices
   }
 
   var body: some View {
@@ -26,9 +26,9 @@ struct ContentView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if visibleDevices.isEmpty {
         ContentUnavailableView {
-          Label("No VST2 or VST3 devices", systemImage: "checkmark.circle")
+          Label("Nothing to convert", systemImage: "checkmark.circle")
         } description: {
-          Text("This set has nothing to convert.")
+          Text("No plugin in this set has a replacement to convert to.")
         } actions: {
           Button("Show all devices") { onlyConvertible = false }
         }
@@ -71,9 +71,10 @@ struct ContentView: View {
         }
       }
       Button { model.convertAllToVst3() } label: {
-        Label("Convert VST2 to VST3", systemImage: "wand.and.stars")
+        Label("Convert to VST3", systemImage: "wand.and.stars")
       }
-      .help("Queue every VST2 device with a native VST3 replacement. Settings are kept.")
+      .help("Queue every VST2 device with a native VST3 replacement, and every Intel-only AU"
+        + " whose VST3 replaces it. Settings are kept.")
       .disabled(model.devices.isEmpty || catalogs.isLoadingVst3)
 
       Spacer()
@@ -136,7 +137,7 @@ struct DeviceRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .opacity(device.enabled ? 1 : 0.5)
 
-      if device.isConvertible {
+      if model.isConvertible(device) {
         Image(systemName: "arrow.right")
           .foregroundStyle(.tertiary)
           .frame(width: 28)
@@ -175,6 +176,9 @@ struct DeviceRow: View {
     case .replaceAU(let au):
       SlotLabel(icon: "exclamationmark.triangle.fill", title: au.name,
                 subtitle: "default settings", badge: "AU", tint: .orange)
+    case .substituteMicro(let target):
+      SlotLabel(icon: "arrow.triangle.swap", title: OrbitToMicro.microName,
+                subtitle: "sounds different · level matched", badge: target.badge, tint: .orange)
     }
   }
 
@@ -193,6 +197,17 @@ struct DeviceRow: View {
       Button("VST3: \(why)") {}.disabled(true)
     case nil:
       EmptyView()
+    }
+    if OrbitToMicro.isOrbit(device) {
+      if model.document?.predatesVst3 == true {
+        Button("dearVR MICRO: re-save in Live 10+ first") {}.disabled(true)
+      } else if let target = catalogs.orbitTarget(for: device) {
+        Button("Replace with dearVR MICRO (sounds different, level matched)") {
+          model.setAction(.substituteMicro(target), for: device)
+        }
+      } else {
+        Button("dearVR MICRO: no native \(device.format == .au ? "AU" : "VST3") installed") {}.disabled(true)
+      }
     }
     Divider()
     if let s = model.suggestedAU(for: device) {

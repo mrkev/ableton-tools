@@ -10,6 +10,8 @@ enum SlotAction: Equatable, Codable {
   case replaceAU(AudioUnitInfo)
   /// Carries the plugin's state and parameter slots over.
   case replaceVST3(Vst3PluginInfo)
+  /// AMBEO Orbit → dearVR MICRO, plus a Utility that matches the level.
+  case substituteMicro(OrbitToMicro.Target)
 }
 
 /// The state of one open Live Set: its DOM, devices and per-device choices.
@@ -90,16 +92,31 @@ final class ConverterModel: ObservableObject {
     actions[device.id] = action
   }
 
-  /// `nil` for anything that isn't a VST2 device.
+  /// `nil` for anything that isn't a VST2 device or an AU with a VST3 replacing it.
   func vst3Availability(of device: Device) -> Vst3Availability? {
-    guard device.format == .vst else { return nil }
+    if device.format == .vst {
+      if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
+      if catalogs.isLoadingVst3 { return .unavailable("scanning VST3s…") }
+    }
+    guard let availability = Vst3Availability.resolve(device, catalog: catalogs.vst3) else { return nil }
     if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
-    if catalogs.isLoadingVst3 { return .unavailable("scanning VST3s…") }
-    return Vst3Availability.resolve(
-      LiveSetScan.Vst2Plugin(
-        name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device),
-        isChunk: Vst2State.isChunkPreset(device.element)),
-      catalog: catalogs.vst3)
+    return availability
+  }
+
+  /// Has a replacement to offer: shown in the "Only convertible" list.
+  func isConvertible(_ device: Device) -> Bool {
+    device.isConvertible || vst3Availability(of: device) != nil
+  }
+
+  /// "Convert to VST3" takes every VST2 with a VST3, but only the AUs that
+  /// need theirs: a native AU loads as it is.
+  private func convertsToVst3(_ device: Device) -> Vst3PluginInfo? {
+    guard case .available(let target)? = vst3Availability(of: device) else { return nil }
+    if device.format == .au {
+      guard let au = LiveSetScan.AuPlugin(device: device), let inventory = catalogs.inventory,
+            case .needsConversion = inventory.load(au) else { return nil }
+    }
+    return target
   }
 
   /// A VST2 device whose own build is native, so it loads without converting.
@@ -113,6 +130,7 @@ final class ConverterModel: ObservableObject {
 
   /// The installed AU whose name best matches this device (for auto-suggest).
   func suggestedAU(for device: Device) -> AudioUnitInfo? {
+    guard device.format != .au else { return nil }
     let want = device.product.lowercased()
     guard !want.isEmpty else { return nil }
     // Prefer an exact name match; fall back to contains.
@@ -129,15 +147,21 @@ final class ConverterModel: ObservableObject {
   func convertAllToVst3() {
     var queued = 0
     var unavailable: [String] = []
-    for d in devices where d.format == .vst {
-      if case .available(let target) = vst3Availability(of: d) {
+    var substituted = 0
+    for d in devices {
+      if let target = convertsToVst3(d) {
         setAction(.replaceVST3(target), for: d)
         queued += 1
-      } else {
+      } else if catalogs.substituteOrbit, document?.predatesVst3 == false,
+                let target = catalogs.orbitTarget(for: d) {
+        setAction(.substituteMicro(target), for: d)
+        substituted += 1
+      } else if d.format == .vst {
         unavailable.append(d.name)
       }
     }
-    status = "\(queued) VST2 device(s) will convert to VST3 on save"
+    status = "\(queued) device(s) will convert to VST3 on save"
+      + (substituted > 0 ? " · \(substituted) Orbit to dearVR MICRO" : "")
       + (unavailable.isEmpty ? "" : " · \(unavailable.count) can't: "
         + Set(unavailable).sorted().joined(separator: ", "))
   }
@@ -175,7 +199,7 @@ final class ConverterModel: ObservableObject {
     guard let document else { return }
     let pending = devices.filter { action(for: $0) != .keep }
     let automated = document.automatedTargetIds
-    var toVst3 = 0, toAU = 0, warnings = 0, failures = 0
+    var toVst3 = 0, toAU = 0, toMicro = 0, warnings = 0, failures = 0
     var lines: [String] = []
 
     for (i, device) in pending.enumerated() {
@@ -201,6 +225,22 @@ final class ConverterModel: ObservableObject {
           lines.append("\(label): not converted: \(error)")
           continue
         }
+      case .substituteMicro(let target):
+        status = "Replacing \(i + 1)/\(pending.count): \(device.name)…"
+        await Task.yield()
+        do {
+          let c = try await OrbitToMicro.convert(
+            device, target: target, document: document, automatedTargets: automated)
+          OrbitToMicro.apply(c, replacing: device)
+          toMicro += 1
+          warnings += c.notes.count
+          lines += c.notes.map { "\(label): \($0)" }
+          hasUnsavedEdits = true
+        } catch {
+          failures += 1
+          lines.append("\(label): not replaced: \(error)")
+        }
+        continue
       }
       device.parent.replaceChild(at: device.element.index, with: replacement)
       hasUnsavedEdits = true
@@ -213,7 +253,8 @@ final class ConverterModel: ObservableObject {
     }
 
     let notes = (toVst3 > 0 ? ["\(toVst3) to VST3"] : []) + (toAU > 0 ? ["\(toAU) to AU"] : [])
-      + (warnings > 0 ? ["\(warnings) warning(s)"] : []) + (failures > 0 ? ["\(failures) failed"] : [])
+      + (toMicro > 0 ? ["\(toMicro) Orbit to MICRO"] : [])
+      + (warnings > 0 ? ["\(warnings) note(s)"] : []) + (failures > 0 ? ["\(failures) failed"] : [])
     do {
       try document.save(to: destination)
       hasUnsavedEdits = false

@@ -66,12 +66,22 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
       app down.
 - [ ] **Try `--force` on a Live 9 set**, then open the result in Live 11. Only matters
       for sets that need converting; Live 9 sets with native plugins already open.
-- [ ] **Find native builds of the top blockers** — Massive (97 sets), AMBEO Orbit (45),
-      FabFilter Pro-C (40). The library's "Plugins holding sets back" has the full list.
+- [ ] **Find native builds of the top blockers** — FabFilter Pro-C (40 sets),
+      TapeStop (21 + 4 as AU), DJMFilter (9), Cthulhu (4, the installed build is
+      Intel only). The library's "Plugins holding sets back" has the full list.
+      Now native: Massive 1.7, DimensionExpander, FabFilter Pro-Q 2.
+- [x] **AMBEO Orbit → dearVR MICRO**, opt-in, with a level-matching Utility.
+- [ ] **Open an Orbit → MICRO conversion in Live 11**: MICRO loads with its settings,
+      the Utility sits after it, and the level matches Orbit by ear.
+- [ ] **Check that a Massive AU set loads its patch** in native Live (1.7 is native, but
+      old state loading is untested).
 - [ ] **Check in Live**: Save As from inside the library, and whether a converted
       `MLoudnessAnalyzer` (the first non-Serum conversion) sounds right.
-- [ ] **VST2 → VST3: `FxCk` presets** — Live's program dumps (28-byte name +
-      LE floats per program) → VST2 `FxCk`/`FxBk` wrapped for the VST3.
+- [x] **OTT → native VST3**, from its Intel AU and its VST2 parameter dumps.
+- [ ] **Open an OTT conversion in Live 11**: OTT loads as VST3 with its settings.
+- [ ] **Parameter dumps for other VST3s** — only VST3s whose state is plain
+      parameter floats (OTT) take one today. Others would need the controller's
+      `setParamNormalized` plus a processor parameter change.
 
 ## Nice-to-haves
 

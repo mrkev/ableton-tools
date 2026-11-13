@@ -5,8 +5,10 @@ struct LiveSetScan: Codable, Sendable, Equatable {
   struct Vst2Plugin: Codable, Sendable, Hashable {
     let name: String
     let uniqueId: Int32?
-    /// Holds a chunk (`FBCh`) preset, the only kind that converts to VST3.
+    /// Holds a chunk (`FBCh`) preset.
     let isChunk: Bool
+    /// Holds Live's dump of the plugin's parameter values (`FxBk`).
+    var isParameterDump = false
     /// The bundle Live loaded it from, e.g. "Serum.vst".
     var fileName: String?
   }
@@ -32,11 +34,15 @@ struct LiveSetScan: Codable, Sendable, Equatable {
 }
 
 enum LiveVersion {
+  /// 10 for "Ableton Live 10.1.40".
+  static func major(creator: String) -> Int? {
+    creator.split(separator: " ").last?.split(separator: ".").first.flatMap { Int($0) }
+  }
+
   /// VST3 support (and the block layout we write) arrived in Live 10.
   /// `creator` looks like "Ableton Live 10.1.40".
   static func predatesVst3(creator: String) -> Bool {
-    guard let major = creator.split(separator: " ").last?.split(separator: ".").first
-      .flatMap({ Int($0) }) else { return false }
+    guard let major = major(creator: creator) else { return false }
     return major < 10
   }
 }
@@ -64,6 +70,7 @@ enum LiveSetScanner {
           name: doc.attribute("<PlugName Value=", from: start, before: end) ?? "VST Plugin",
           uniqueId: doc.attribute("<UniqueId Value=", from: start, before: end).flatMap { Int32($0) },
           isChunk: type.flatMap { Int($0) }.flatMap(DeviceExtractor.fourCC) == "FBCh",
+          isParameterDump: type.flatMap { Int($0) }.flatMap(DeviceExtractor.fourCC) == "FxBk",
           fileName: doc.attribute("<FileName Value=", from: start, before: end)))
         cursor = end
       }
@@ -156,7 +163,7 @@ struct LiveSetScanCache {
   /// Bump when `LiveSetScan`'s meaning changes.
   private static let fileURL = FileManager.default
     .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("DeviceConverter/live-set-scans-v2.json")
+    .appendingPathComponent("DeviceConverter/live-set-scans-v3.json")
 
   static func load() -> LiveSetScanCache {
     var cache = LiveSetScanCache()
@@ -189,5 +196,17 @@ struct LiveSetScanCache {
     let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
     guard let date = values?.contentModificationDate, let size = values?.fileSize else { return nil }
     return (date.timeIntervalSince1970, size)
+  }
+}
+
+extension LiveSetScan.AuPlugin {
+  /// `nil` for anything that isn't an AU device.
+  init?(device: Device) {
+    guard device.format == .au,
+          let info = device.element.firstChild("PluginDesc")?.firstChild("AuPluginInfo") else { return nil }
+    func code(_ tag: String) -> Int32 { info.childValue(tag).flatMap { Int32($0) } ?? 0 }
+    self.init(
+      name: info.childValue("Name") ?? device.product, type: code("ComponentType"),
+      subType: code("ComponentSubType"), manufacturer: code("ComponentManufacturer"))
   }
 }

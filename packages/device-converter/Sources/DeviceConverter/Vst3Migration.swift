@@ -20,7 +20,8 @@ struct Vst3Conversion {
   var warnings: [String]
 }
 
-/// Whether a VST2 device can be converted to VST3, and if not, why.
+/// Whether a VST2 device (or an AU built around a VST2) can be converted to
+/// VST3, and if not, why.
 enum Vst3Availability: Equatable {
   case available(Vst3PluginInfo)
   case unavailable(String)
@@ -29,27 +30,56 @@ enum Vst3Availability: Equatable {
   static let unsupportedPreset = "preset type not supported yet"
   static let notCompatible = "its VST3 can't load VST2 settings"
 
-  /// Ignores the set's Live version: see `SetStatus.needsResave`.
+  /// Ignores the set's Live version: see `SetStatus.needsResave`. Chunks and
+  /// parameter dumps both count; whether the VST3 can take a parameter dump is
+  /// only known once it's loaded, and the conversion says so if not.
   static func resolve(_ plugin: LiveSetScan.Vst2Plugin, catalog: [Vst3PluginInfo]) -> Vst3Availability {
     guard let target = Vst3Migration.target(uniqueId: plugin.uniqueId, name: plugin.name, in: catalog) else {
       let lowered = plugin.name.lowercased()
       return .unavailable(catalog.contains { $0.name.lowercased() == lowered } ? notCompatible : noVst3)
     }
-    return plugin.isChunk ? .available(target) : .unavailable(unsupportedPreset)
+    return plugin.isChunk || plugin.isParameterDump ? .available(target) : .unavailable(unsupportedPreset)
+  }
+
+  /// An AU built around a VST2 uses the VST2's unique id as its subtype, so the
+  /// VST3 that replaces the VST2 replaces it too. `nil` for any other AU.
+  static func resolve(_ plugin: LiveSetScan.AuPlugin, catalog: [Vst3PluginInfo]) -> Vst3Availability? {
+    Vst3Migration.target(uniqueId: plugin.subType, name: plugin.name, in: catalog).map { .available($0) }
+  }
+
+  /// For a device in an open set: `nil` unless it's a VST2 device, or an AU with
+  /// a VST3 that replaces it.
+  static func resolve(_ device: Device, catalog: [Vst3PluginInfo]) -> Vst3Availability? {
+    switch device.format {
+    case .vst:
+      let type = Vst2State.presetType(device.element)
+      return resolve(LiveSetScan.Vst2Plugin(
+        name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device),
+        isChunk: type == "FBCh", isParameterDump: type == "FxBk"), catalog: catalog)
+    case .au:
+      return LiveSetScan.AuPlugin(device: device).flatMap { resolve($0, catalog: catalog) }
+    default:
+      return nil
+    }
   }
 }
 
 enum Vst3MigrationError: Error, CustomStringConvertible {
   case notVst2
   case noState
+  case notWrappedVst2
   case unsupportedPreset(String)
+  case parametersNotAccepted
   case settingsNotCarried(String)
 
   var description: String {
     switch self {
     case .notVst2: return "not a VST2 device"
     case .noState: return "no saved VST2 state found"
-    case .unsupportedPreset(let t): return "'\(t)' presets can't be carried over yet (only chunk presets)"
+    case .notWrappedVst2: return "this Audio Unit doesn't keep VST2 settings"
+    case .unsupportedPreset(let t): return "'\(t)' presets can't be carried over yet"
+    case .parametersNotAccepted:
+      return "its VST3 doesn't store plain parameter values, so these settings can't be carried over yet"
     case .settingsNotCarried(let what): return "settings didn't carry over: \(what)"
     }
   }
@@ -60,8 +90,8 @@ enum Vst3Migration {
   /// VST2-compatible class id. A VST3 that merely shares the name doesn't qualify:
   /// it can report success loading a VST2 chunk while ignoring it (Melda's do).
   static func target(for device: Device, in catalog: [Vst3PluginInfo]) -> Vst3PluginInfo? {
-    guard device.format == .vst else { return nil }
-    return target(uniqueId: vst2UniqueId(device), name: device.product, in: catalog)
+    if case .available(let target)? = Vst3Availability.resolve(device, catalog: catalog) { return target }
+    return nil
   }
 
   static func target(uniqueId: Int32?, name: String, in catalog: [Vst3PluginInfo]) -> Vst3PluginInfo? {
@@ -82,23 +112,38 @@ enum Vst3Migration {
   static func prepare(
     _ device: Device, target: Vst3PluginInfo, automatedTargets: Set<String> = []
   ) throws -> Vst3Conversion {
-    guard device.format == .vst else { throw Vst3MigrationError.notVst2 }
-    guard let state = Vst2State(device: device.element) else { throw Vst3MigrationError.noState }
-    guard let wrapped = state.vst3CompatibleState() else {
-      throw Vst3MigrationError.unsupportedPreset(state.type)
+    let legacy = try LegacyPreset(device: device)
+    let fresh = try defaults(of: target)
+    let defaults = fresh.parameters
+    let state: Data
+    switch legacy {
+    case .chunk(let vst2):
+      guard let wrapped = vst2.vst3CompatibleState() else { throw Vst3MigrationError.unsupportedPreset(vst2.type) }
+      state = wrapped
+    case .parameters(let values):
+      state = try parameterState(values, defaults: fresh)
     }
 
-    let defaults = try defaultParameters(of: target)
     let plugin = try Vst3Instance(target)
-    try plugin.setState(wrapped)
+    try plugin.setState(state)
     let params = plugin.parameters
     var warnings: [String] = []
+
+    // A parameter dump is checked value by value: every one must have arrived.
+    if case .parameters(let values) = legacy {
+      guard params.count >= values.count else { throw Vst3MigrationError.parametersNotAccepted }
+      for (i, value) in values.enumerated() where abs(params[i].normalized - Double(value)) > 1e-4 {
+        throw Vst3MigrationError.settingsNotCarried(
+          String(format: "'%@' loads as %.4f but was %.4f", params[i].title, params[i].normalized, value))
+      }
+    }
 
     let defaultById = Dictionary(defaults.map { ($0.id, $0.normalized) }, uniquingKeysWith: { a, _ in a })
     let changed = params.filter { p in
       defaultById[p.id].map { abs($0 - p.normalized) > 1e-6 } ?? false
     }.count
-    if changed == 0 && !params.isEmpty {
+    // Only a chunk needs this guess; a parameter dump was checked value by value.
+    if case .chunk = legacy, changed == 0, !params.isEmpty {
       warnings.append("no parameter moved off its default after loading — the patch may be the plugin's init patch, or the state wasn't accepted")
     }
 
@@ -109,8 +154,13 @@ enum Vst3Migration {
     // Plugins whose VST3 ids are the VST2 indices (JUCE legacy ids, Steinberg's
     // wrapper) can be mapped by index even when a title changed between
     // versions (Serum: "LFO1Rate" → "LFO1 Rate") or is patch-dependent.
-    let vst2Count = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")?
-      .childValue("NumberOfParameters").flatMap(Int.init) ?? 0
+    let vst2Count: Int
+    if case .parameters(let values) = legacy {
+      vst2Count = values.count
+    } else {
+      vst2Count = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")?
+        .childValue("NumberOfParameters").flatMap(Int.init) ?? 0
+    }
     let indexIds = vst2Count > 0 && params.count >= vst2Count
       && params.prefix(vst2Count).enumerated().allSatisfy { Int($0.element.id) == $0.offset }
     for slot in configuredSlots(device.element) {
@@ -141,7 +191,7 @@ enum Vst3Migration {
 
     return Vst3Conversion(
       target: target,
-      processorState: plugin.componentState() ?? wrapped,
+      processorState: plugin.componentState() ?? state,
       controllerState: plugin.controllerState() ?? Data(),
       parameterMap: map,
       mapping: mapping,
@@ -150,13 +200,35 @@ enum Vst3Migration {
       warnings: warnings)
   }
 
-  private static var defaultsCache: [[UInt8]: [Vst3Instance.Parameter]] = [:]
+  /// A freshly instantiated VST3: its parameters and the state it saves.
+  struct Defaults {
+    let parameters: [Vst3Instance.Parameter]
+    let state: Data?
+  }
 
-  private static func defaultParameters(of target: Vst3PluginInfo) throws -> [Vst3Instance.Parameter] {
+  private static var defaultsCache: [[UInt8]: Defaults] = [:]
+
+  private static func defaults(of target: Vst3PluginInfo) throws -> Defaults {
     if let cached = defaultsCache[target.cid] { return cached }
-    let parameters = try Vst3Instance(target).parameters
-    defaultsCache[target.cid] = parameters
-    return parameters
+    let plugin = try Vst3Instance(target)
+    let fresh = Defaults(parameters: plugin.parameters, state: plugin.componentState())
+    defaultsCache[target.cid] = fresh
+    return fresh
+  }
+
+  /// Some VST3s (OTT) save nothing but their parameters' values, as
+  /// little-endian floats in parameter order. Recognized by a fresh instance's
+  /// state being exactly that; then a VST2 parameter dump becomes a state by
+  /// putting its values first, keeping the defaults of any extra parameters
+  /// (OTT's VST3 adds Bypass).
+  static func parameterState(_ values: [Float], defaults: Defaults) throws -> Data {
+    guard let own = defaults.state, own.count % 4 == 0 else { throw Vst3MigrationError.parametersNotAccepted }
+    var floats = Data.floats(own, bigEndian: false)
+    guard floats.count >= values.count, floats.count <= defaults.parameters.count,
+          zip(floats, defaults.parameters).allSatisfy({ abs(Double($0) - $1.normalized) < 1e-6 })
+    else { throw Vst3MigrationError.parametersNotAccepted }
+    floats.replaceSubrange(0..<values.count, with: values)
+    return Data(littleEndianFloats: floats)
   }
 
   struct ConfiguredSlot {

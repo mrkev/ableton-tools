@@ -22,7 +22,7 @@ enum BatchDestination: Equatable {
 /// How one set in a batch ended up.
 struct BatchSetResult: Identifiable, Codable {
   enum Outcome: Codable {
-    case converted(output: URL, toVst3: Int, toAU: Int, vst2Left: Int, notes: [String])
+    case converted(output: URL, toVst3: Int, toAU: Int, toMicro: Int, vst2Left: Int, notes: [String])
     case skipped(String)
     case failed(String)
   }
@@ -33,9 +33,11 @@ struct BatchSetResult: Identifiable, Codable {
 
   var summary: String {
     switch outcome {
-    case .converted(_, let toVst3, let toAU, let left, let notes):
-      return ["\(toVst3) to VST3"]
+    case .converted(_, let toVst3, let toAU, let toMicro, let left, let notes):
+      return [String]()
+        .appending(toVst3 > 0 || toMicro == 0, "\(toVst3) to VST3")
         .appending(toAU > 0, "\(toAU) to AU")
+        .appending(toMicro > 0, "\(toMicro) Orbit to MICRO")
         .appending(left > 0, "\(left) VST2 left")
         .appending(!notes.isEmpty, "\(notes.count) note(s)")
         .joined(separator: " · ")
@@ -71,14 +73,15 @@ struct BatchJob: Codable {
 final class BatchRun {
   let jobs: [BatchJob]
   let destination: BatchDestination
-  private let catalog: [Vst3PluginInfo]
+  /// With `substituteOrbit` set, sets without choices also replace AMBEO Orbit.
+  private let inventory: PluginInventory
   var onStep: ((String) -> Void)?
   var onResult: ((BatchSetResult) -> Void)?
 
-  init(jobs: [BatchJob], destination: BatchDestination, catalog: [Vst3PluginInfo]) {
+  init(jobs: [BatchJob], destination: BatchDestination, inventory: PluginInventory) {
     self.jobs = jobs
     self.destination = destination
-    self.catalog = catalog
+    self.inventory = inventory
   }
 
   func run() async {
@@ -121,51 +124,73 @@ final class BatchRun {
       plan = zip(devices, choices).compactMap { $1.action == .keep ? nil : ($0, $1.action) }
     } else {
       plan = devices.compactMap { device in
-        guard device.format == .vst, case .available(let target) = Vst3Availability.resolve(
-          LiveSetScan.Vst2Plugin(
-            name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device),
-            isChunk: Vst2State.isChunkPreset(device.element)),
-          catalog: catalog) else { return nil }
-        return (device, .replaceVST3(target))
+        if device.format == .vst,
+           case .available(let target)? = Vst3Availability.resolve(device, catalog: inventory.vst3) {
+          return (device, .replaceVST3(target))
+        }
+        // An AU only when it needs its VST3: a native AU loads as it is.
+        if let au = LiveSetScan.AuPlugin(device: device), case .needsConversion(let target) = inventory.load(au) {
+          return (device, .replaceVST3(target))
+        }
+        if OrbitToMicro.isOrbit(device), let target = inventory.orbitTarget(for: device.format) {
+          return (device, .substituteMicro(target))
+        }
+        return nil
       }
     }
     guard !plan.isEmpty else { return .skipped("nothing to convert") }
 
-    var toVst3 = 0, toAU = 0, vst2Converted = 0
+    var toVst3 = 0, toAU = 0, toMicro = 0
+    var removed: [DeviceFormat: Int] = [:], added: [DeviceFormat: Int] = [:]
     var notes: [String] = []
     for (i, (device, action)) in plan.enumerated() {
       onStep?("\(job.set.name): \(device.name) (\(i + 1)/\(plan.count))")
       await Task.yield()
       let label = "\(device.trackName) › \(device.name)"
-      let replacement: XMLElement
+      let format = device.format
       switch action {
       case .keep:
         continue
       case .replaceAU(let au):
-        replacement = DeviceBuilder.makeAUDevice(from: device, target: au)
+        device.parent.replaceChild(
+          at: device.element.index, with: DeviceBuilder.makeAUDevice(from: device, target: au))
         toAU += 1
+        added[.au, default: 0] += 1
       case .replaceVST3(let target):
         do {
           let c = try Vst3Migration.prepare(device, target: target, automatedTargets: automated)
-          replacement = DeviceBuilder.makeVst3Device(from: device, conversion: c)
+          device.parent.replaceChild(
+            at: device.element.index, with: DeviceBuilder.makeVst3Device(from: device, conversion: c))
           toVst3 += 1
+          added[.vst3, default: 0] += 1
           notes += c.warnings.map { "\(label): \($0)" }
         } catch {
           notes.append("\(label): not converted: \(error)")
           continue
         }
+      case .substituteMicro(let target):
+        do {
+          let c = try await OrbitToMicro.convert(
+            device, target: target, document: doc, automatedTargets: automated)
+          OrbitToMicro.apply(c, replacing: device)
+          toMicro += 1
+          added[target.format, default: 0] += 1
+          notes += c.notes.map { "\(label): \($0)" }
+        } catch {
+          notes.append("\(label): not replaced: \(error)")
+          continue
+        }
       }
-      if device.format == .vst { vst2Converted += 1 }
-      device.parent.replaceChild(at: device.element.index, with: replacement)
+      removed[format, default: 0] += 1
     }
-    guard toVst3 + toAU > 0 else { return .failed(notes.first ?? "nothing could be converted") }
+    guard toVst3 + toAU + toMicro > 0 else { return .failed(notes.first ?? "nothing could be converted") }
 
     onStep?("Writing \(output.lastPathComponent)…")
     await Task.yield()
-    let vst2Before = devices.filter { $0.format == .vst }.count
-    let vst3Before = devices.filter { $0.format == .vst3 }.count
-    let auBefore = devices.filter { $0.format == .au }.count
-    let vst2Left = vst2Before - vst2Converted
+    func expected(_ format: DeviceFormat) -> Int {
+      devices.filter { $0.format == format }.count - removed[format, default: 0] + added[format, default: 0]
+    }
+    let vst2Left = expected(.vst)
     let written = await Task.detached(priority: .userInitiated) { () -> Result<LiveSetScan, Error> in
       Result {
         try FileManager.default.createDirectory(
@@ -179,12 +204,12 @@ final class BatchRun {
     case .failure(let error):
       return .failed("couldn't write: \(error)")
     case .success(let scan):
-      guard scan.vst2.count == vst2Left, scan.vst3.count == vst3Before + toVst3,
-            scan.au.count == auBefore + toAU else {
+      guard scan.vst2.count == vst2Left, scan.vst3.count == expected(.vst3), scan.au.count == expected(.au) else {
         try? FileManager.default.removeItem(at: output)
         return .failed("output didn't verify, so it was removed")
       }
-      return .converted(output: output, toVst3: toVst3, toAU: toAU, vst2Left: vst2Left, notes: notes)
+      return .converted(
+        output: output, toVst3: toVst3, toAU: toAU, toMicro: toMicro, vst2Left: vst2Left, notes: notes)
     }
   }
 }
@@ -192,16 +217,17 @@ final class BatchRun {
 /// Headless batch conversion:
 ///
 ///     DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals)
-///                     [--include-partial] [--include-native] [--dry-run]
+///                     [--include-partial] [--include-native] [--substitute-orbit] [--dry-run]
 ///
 /// Converts the sets that need it to open natively. `--include-partial` adds sets
 /// stuck on other plugins; `--include-native` adds sets that already open.
+/// `--substitute-orbit` also replaces AMBEO Orbit with dearVR MICRO.
 ///
 /// There's deliberately no default destination: writing into project folders
 /// has to be asked for.
 enum BatchCli {
   private static let usage = "usage: DeviceConverter --batch <folder> "
-    + "(--out-dir <dir> | --beside-originals) [--include-partial] [--include-native] [--dry-run]"
+    + "(--out-dir <dir> | --beside-originals) [--include-partial] [--include-native] [--substitute-orbit] [--dry-run]"
 
   @MainActor static func run(arguments args: [String]) async -> Int32 {
     setlinebuf(stdout)
@@ -224,7 +250,8 @@ enum BatchCli {
       print("no projects found in \(folder.path)")
       return 1
     }
-    let inventory = PluginInventory.loadNow()
+    var inventory = PluginInventory.loadNow()
+    inventory.substituteOrbit = args.contains("--substitute-orbit")
     let includePartial = args.contains("--include-partial")
     let includeOptional = args.contains("--include-native")
     var jobs: [BatchJob] = []
@@ -252,11 +279,11 @@ enum BatchCli {
       return 0
     }
 
-    let run = BatchRun(jobs: jobs, destination: destination, catalog: inventory.vst3)
+    let run = BatchRun(jobs: jobs, destination: destination, inventory: inventory)
     var converted = 0, skipped = 0, failed = 0
     run.onResult = { result in
       switch result.outcome {
-      case .converted(_, _, _, _, let notes):
+      case .converted(_, _, _, _, _, let notes):
         converted += 1
         print("  ✓ \(result.set.name): \(result.summary)")
         for note in notes { print("      ⚠︎ \(note)") }
@@ -281,6 +308,7 @@ struct BatchWorkerRequest: Codable {
   let jobs: [BatchJob]
   /// `nil` writes beside the originals.
   let folder: URL?
+  let substituteOrbit: Bool
 }
 
 /// What a worker reports on stdout, one prefixed JSON object per line. The prefix
@@ -298,9 +326,11 @@ enum BatchWorker {
     setlinebuf(stdout)
     let input = FileHandle.standardInput.readDataToEndOfFile()
     guard let request = try? JSONDecoder().decode(BatchWorkerRequest.self, from: input) else { return 2 }
+    var inventory = PluginInventory.loadNow()
+    inventory.substituteOrbit = request.substituteOrbit
     let run = BatchRun(
       jobs: request.jobs, destination: request.folder.map { .folder($0) } ?? .besideOriginals,
-      catalog: Vst3Catalog.installed())
+      inventory: inventory)
     run.onStep = { emit(.step($0)) }
     run.onResult = { emit(.result($0)) }
     await run.run()
@@ -323,6 +353,7 @@ enum BatchWorker {
 final class BatchController: ObservableObject {
   let jobs: [BatchJob]
   let destination: BatchDestination
+  let substituteOrbit: Bool
 
   @Published private(set) var results: [BatchSetResult] = []
   @Published private(set) var currentStep = ""
@@ -330,9 +361,10 @@ final class BatchController: ObservableObject {
   @Published private(set) var isCancelled = false
   private var worker: Process?
 
-  init(jobs: [BatchJob], destination: BatchDestination) {
+  init(jobs: [BatchJob], destination: BatchDestination, substituteOrbit: Bool) {
     self.jobs = jobs
     self.destination = destination
+    self.substituteOrbit = substituteOrbit
   }
 
   /// Stops the worker now. Outputs are written atomically, so the set in progress
@@ -365,7 +397,7 @@ final class BatchController: ObservableObject {
     let folder: URL?
     if case .folder(let url) = destination { folder = url } else { folder = nil }
     guard let executable = Bundle.main.executableURL,
-          let request = try? JSONEncoder().encode(BatchWorkerRequest(jobs: jobs, folder: folder)) else {
+          let request = try? JSONEncoder().encode(BatchWorkerRequest(jobs: jobs, folder: folder, substituteOrbit: substituteOrbit)) else {
       return false
     }
     let process = Process()

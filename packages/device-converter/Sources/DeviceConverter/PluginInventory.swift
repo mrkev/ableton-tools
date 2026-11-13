@@ -4,10 +4,20 @@ import Foundation
 enum PluginLoad: Equatable {
   /// A native build exists in the device's own format, so it loads as-is.
   case native
-  /// Its VST2 build isn't native, but a compatible native VST3 can replace it.
+  /// Its VST2 build (or its AU, built around the VST2) isn't native, but a
+  /// compatible native VST3 can replace it.
   case needsConversion(Vst3PluginInfo)
   /// Nothing native that Live could load in its place.
   case stuck(reason: String)
+  /// Opted in: a different plugin replaces it (AMBEO Orbit → dearVR MICRO).
+  case substitute(OrbitToMicro.Target)
+
+  var needsWork: Bool {
+    switch self {
+    case .needsConversion, .substitute: return true
+    case .native, .stuck: return false
+    }
+  }
 }
 
 /// A plugin keeping a set from opening natively.
@@ -25,6 +35,13 @@ struct PluginInventory {
   /// Installed VST2 bundles, by lowercased file name, and whether each is native.
   var vst2Files: [String: Bool]
   var audioUnits: [AudioUnitInfo]
+  /// Opt-in: replace AMBEO Orbit with dearVR MICRO.
+  var substituteOrbit = false
+
+  /// MICRO for an Orbit device in `format`, when opted in and installed.
+  func orbitTarget(for format: DeviceFormat) -> OrbitToMicro.Target? {
+    substituteOrbit ? OrbitToMicro.target(for: format, vst3: vst3, audioUnits: audioUnits) : nil
+  }
 
   /// Doesn't load plugin code except for `vst3`, which needs the main thread.
   static func vst2Bundles() -> [String: Bool] {
@@ -87,6 +104,7 @@ struct PluginInventory {
   func load(_ plugin: LiveSetScan.Vst2Plugin) -> PluginLoad {
     let vst2 = vst2IsNative(plugin)
     if vst2 == true { return .native }
+    if OrbitToMicro.isOrbit(plugin), let target = orbitTarget(for: .vst) { return .substitute(target) }
     switch Vst3Availability.resolve(plugin, catalog: vst3) {
     case .available(let target):
       return .needsConversion(target)
@@ -104,6 +122,7 @@ struct PluginInventory {
 
   func load(_ plugin: LiveSetScan.Vst3Plugin) -> PluginLoad {
     if plugin.uid.count == 4, vst3.contains(where: { $0.uidFields == plugin.uid }) { return .native }
+    if OrbitToMicro.isOrbit(plugin), let target = orbitTarget(for: .vst3) { return .substitute(target) }
     switch vst3Bundles[Self.normalized(plugin.name)] {
     case true?: return .stuck(reason: "installed VST3 is a different plugin ID")
     case false?: return .stuck(reason: "VST3 is Intel only")
@@ -117,26 +136,48 @@ struct PluginInventory {
         && Int32(bitPattern: $0.manufacturerCode) == plugin.manufacturer
     }
     if matches.contains(where: \.isNative) { return .native }
+    if OrbitToMicro.isOrbit(plugin), let target = orbitTarget(for: .au) { return .substitute(target) }
+    if case .available(let target)? = Vst3Availability.resolve(plugin, catalog: vst3) {
+      return .needsConversion(target)
+    }
     return .stuck(reason: matches.isEmpty ? "AU not installed" : "AU is Intel only")
   }
 
   // MARK: Whole sets
 
-  func stuckPlugins(in scan: LiveSetScan) -> [(StuckPlugin)] {
-    let vst2 = scan.vst2.map { ($0.name, load($0)) }
-    let vst3 = scan.vst3.map { ($0.name, load($0)) }
-    let au = scan.au.map { ($0.name, load($0)) }
-    return (vst2 + vst3 + au).compactMap { name, load in
+  /// Every plugin device in the set, with how it loads.
+  func loads(in scan: LiveSetScan) -> [(name: String, load: PluginLoad)] {
+    scan.vst2.map { ($0.name, load($0)) } + scan.vst3.map { ($0.name, load($0)) }
+      + scan.au.map { ($0.name, load($0)) }
+  }
+
+  func stuckPlugins(in scan: LiveSetScan) -> [StuckPlugin] {
+    loads(in: scan).compactMap { name, load in
       if case .stuck(let reason) = load { return StuckPlugin(name: name, reason: reason) }
       return nil
     }
   }
 
-  /// VST2 devices with a usable VST3, whether or not they need one to load.
+  /// VST2 devices with a usable VST3, whether or not they need one to load, AUs
+  /// that need their VST3, and opted-in substitutions.
   func convertibleCount(in scan: LiveSetScan) -> Int {
     scan.vst2.filter {
       if case .available = Vst3Availability.resolve($0, catalog: vst3) { return true }
       return false
-    }.count
+    }.count + scan.au.filter {
+      if case .needsConversion = load($0) { return true }
+      return false
+    }.count + substitutionCount(in: scan)
+  }
+
+  /// Devices an opted-in substitution replaces.
+  func substitutionCount(in scan: LiveSetScan) -> Int {
+    loads(in: scan).filter { if case .substitute = $0.load { return true } else { return false } }.count
+  }
+
+  /// Uses of AMBEO Orbit, in any format.
+  static func orbitCount(in scan: LiveSetScan) -> Int {
+    scan.vst2.filter(OrbitToMicro.isOrbit).count + scan.vst3.filter(OrbitToMicro.isOrbit).count
+      + scan.au.filter(OrbitToMicro.isOrbit).count
   }
 }

@@ -15,8 +15,27 @@ final class PluginCatalogs: ObservableObject {
   /// A save or batch is converting. Only one conversion runs at a time, and the
   /// UI that could start another is disabled meanwhile.
   @Published var isHostingPlugins = false
+  /// Opted in to replacing AMBEO Orbit with dearVR MICRO. Remembered.
+  @Published var substituteOrbit = UserDefaults.standard.bool(forKey: OrbitToMicro.defaultsKey) {
+    didSet { UserDefaults.standard.set(substituteOrbit, forKey: OrbitToMicro.defaultsKey) }
+  }
 
   var isLoading: Bool { inventory == nil }
+
+  /// `inventory` with the opt-ins applied.
+  var effectiveInventory: PluginInventory? {
+    inventory.map {
+      var out = $0
+      out.substituteOrbit = substituteOrbit
+      return out
+    }
+  }
+
+  /// MICRO for an Orbit device, when opted in and installed.
+  func orbitTarget(for device: Device) -> OrbitToMicro.Target? {
+    guard OrbitToMicro.isOrbit(device) else { return nil }
+    return OrbitToMicro.target(for: device.format, vst3: vst3, audioUnits: audioUnits)
+  }
 
   init() {
     Task {
@@ -88,6 +107,7 @@ final class AppModel: ObservableObject {
   private var cache = LiveSetScanCache.load()
   private var scanTask: Task<Void, Never>?
   private var catalogWatcher: Task<Void, Never>?
+  private var optInWatcher: Task<Void, Never>?
   private var setModels: [URL: ConverterModel] = [:]
 
   var isScanning: Bool { scanned < scanTotal }
@@ -100,6 +120,14 @@ final class AppModel: ObservableObject {
       for await inventory in values where inventory != nil {
         self?.recomputeStatuses()
         break
+      }
+    }
+    optInWatcher = Task { [weak self] in
+      guard let values = self?.catalogs.$substituteOrbit.dropFirst().values else { return }
+      for await _ in values {
+        // @Published delivers before the property changes.
+        await Task.yield()
+        self?.recomputeStatuses()
       }
     }
   }
@@ -183,7 +211,7 @@ final class AppModel: ObservableObject {
           ? model.devices.map { BatchJob.Choice(product: $0.product, action: model.action(for: $0)) } : nil
       })
     }
-    let run = BatchController(jobs: jobs, destination: destination)
+    let run = BatchController(jobs: jobs, destination: destination, substituteOrbit: catalogs.substituteOrbit)
     batch = run
     catalogs.isHostingPlugins = true
     Task {
@@ -270,7 +298,7 @@ final class AppModel: ObservableObject {
       if let why = scanFailures[set.url] {
         out[set.url] = .failed(why)
       } else if let scan = scans[set.url] {
-        out[set.url] = catalogs.inventory.map {
+        out[set.url] = catalogs.effectiveInventory.map {
           SetStatus.resolve(
             scan: scan, convertedScan: set.convertedURL.flatMap { scans[$0] },
             hasConversion: set.convertedURL != nil, inventory: $0)
@@ -311,6 +339,12 @@ final class AppModel: ObservableObject {
       }
     }
     return out
+  }
+
+  /// How many sets use AMBEO Orbit, and how many times.
+  func orbitUsage(in sets: [LiveSetEntry]) -> (sets: Int, instances: Int) {
+    let counts = sets.compactMap { scans[$0.url] }.map(PluginInventory.orbitCount).filter { $0 > 0 }
+    return (counts.count, counts.reduce(0, +))
   }
 
   /// Plugins keeping sets from opening natively, most sets first.

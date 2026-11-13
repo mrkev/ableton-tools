@@ -117,7 +117,8 @@ enum SetStatus: Hashable {
   /// Every plugin has a native build. `convertible` VST2 devices could still move
   /// to VST3, but don't need to.
   case opens(convertible: Int)
-  /// Opens once these VST2 devices are converted.
+  /// Opens once these devices are converted (VST2 to VST3, or an opted-in
+  /// substitution).
   case afterConverting(Int)
   /// Saved by Live < 10, so `Int` devices can only convert after a re-save. A set
   /// that needs no conversion just opens: Live upgrades it.
@@ -134,16 +135,21 @@ enum SetStatus: Hashable {
   ) -> SetStatus {
     if hasConversion {
       guard let convertedScan else { return .scanning }
-      let stuck = inventory.stuckPlugins(in: convertedScan)
+      // A conversion made before opting in to a substitution still has the plugin.
+      let stuck = inventory.loads(in: convertedScan).compactMap { name, load -> StuckPlugin? in
+        switch load {
+        case .stuck(let reason): return StuckPlugin(name: name, reason: reason)
+        case .substitute, .needsConversion:
+          return StuckPlugin(name: name, reason: "the -vst3.als predates this replacement; remove it to convert again")
+        case .native: return nil
+        }
+      }
       return stuck.isEmpty ? .converted : .stuck(stuck, convertible: 0)
     }
     let convertible = scan.predatesVst3 ? 0 : inventory.convertibleCount(in: scan)
     let stuck = inventory.stuckPlugins(in: scan)
     if !stuck.isEmpty { return .stuck(stuck, convertible: convertible) }
-    let needed = scan.vst2.filter {
-      if case .needsConversion = inventory.load($0) { return true }
-      return false
-    }.count
+    let needed = inventory.loads(in: scan).filter(\.load.needsWork).count
     if needed > 0 { return scan.predatesVst3 ? .resaveFirst(needed) : .afterConverting(needed) }
     return .opens(convertible: convertible)
   }
@@ -167,8 +173,8 @@ enum SetStatus: Hashable {
     case .failed(let why): return "Couldn't read: \(why)"
     case .opens(let n):
       return n == 0 ? "Opens natively" : "Opens natively; \(n) VST2 could still move to VST3"
-    case .afterConverting(let n): return "Opens after converting \(n) VST2"
-    case .resaveFirst(let n): return "Re-save in Live 10+, then convert \(n) VST2"
+    case .afterConverting(let n): return "Opens after converting \(n) device\(n == 1 ? "" : "s")"
+    case .resaveFirst(let n): return "Re-save in Live 10+, then convert \(n) device\(n == 1 ? "" : "s")"
     case .stuck(let plugins, _):
       return "Stuck on " + Set(plugins.map(\.name)).sorted().joined(separator: ", ")
     case .converted: return "Converted, and opens natively"
@@ -197,7 +203,7 @@ enum SetStatus: Hashable {
 
     var explanation: String {
       switch self {
-      case .afterConverting: return "Needs VST2 devices replaced by their native VST3s."
+      case .afterConverting: return "Needs VST2 devices replaced by their native VST3s, or opted-in replacements."
       case .resaveFirst: return "Saved by Live 9. Re-save in Live 10+, then convert."
       case .stuck: return "Uses a plugin with no native build Live can use."
       case .failed: return "The file couldn't be read as a Live Set."

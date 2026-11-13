@@ -45,17 +45,25 @@ swift run DeviceConverter --vst3 "/path/to/Set.als" [--out out.als] [--dry-run] 
 
 Writes `<Set>-vst3.als` next to the original (never overwrites it) and prints
 a per-device report. For every VST2 device with an installed VST3 counterpart
-that loads natively:
+that loads natively, and every Intel-only Audio Unit built around a VST2 whose
+VST3 replaces it (see below):
 
 1. **Find the VST3.** Steinberg's VST2-compatible class id — `"VST"` + the
    VST2 unique id + the first 9 chars of the lowercased name (e.g. Serum
    `XfsX` → `VSTXfsXserum`). A VST3 that only shares the name doesn't count:
    Melda's report success loading a VST2 chunk but come up with other values.
-2. **Carry the state.** The VST2 chunk (`VstPreset/Buffer`) is wrapped as
-   `VstW` header + `CcnK`/`FBCh` bank, which is what VST3 builds that replace
-   their VST2 accept. The converter *hosts the VST3 offline* (`CVst3Host`, a
-   hand-rolled minimal VST3 host), loads that blob, and stores the state the
-   plugin re-emits as `ProcessorState` / `ControllerState`.
+2. **Carry the state.** The converter *hosts the VST3 offline* (`CVst3Host`, a
+   hand-rolled minimal VST3 host), loads the old settings into it, and stores
+   the state the plugin re-emits as `ProcessorState` / `ControllerState`. The
+   old settings come in two kinds:
+   - **Chunks** (`FBCh`): wrapped as `VstW` header + `CcnK`/`FBCh` bank, which
+     is what VST3 builds that replace their VST2 accept.
+   - **Parameter dumps**: Live's `FxBk` dump of a VST2 (each program a 28-byte
+     name + little-endian floats), or the `CcnK`/`FxCk` program an AU built
+     around a VST2 keeps under `vstdata` in its state plist. These only work
+     for a VST3 whose own state is its parameter values as little-endian
+     floats in parameter order (Xfer's OTT). That's checked against a fresh
+     instance first, and every value is read back after loading.
 3. **Re-point parameter slots.** Configured `PluginFloatParameter`s (what
    automation / macros target) map VST2 index → VST3 ParamID, matched by id +
    title, then title (ignoring case/spacing), then index when the plugin's VST3
@@ -67,10 +75,20 @@ that loads natively:
 Sets saved by Live < 10 are refused unless `--force` (Live 9 predates VST3,
 and stores arrangement automation inline) — re-save them in Live 11 first.
 
-Limits: only chunk (`FBCh`) presets — Live's `FxCk` program dumps (e.g. Xfer
-OTT / DimensionExpander) aren't converted yet. Intel-only VST3s are skipped
-(the CLI runs native, like Live). Verified against Serum: state loads, ids are
-index-compatible.
+**Audio Units built around a VST2** (Xfer's) use the VST2's unique id as their
+subtype, which is how their VST3 is found. Live wraps AU and VST3 devices in the
+same envelope, so only the tag (`AuPluginDevice` → `PluginDevice`), `PluginDesc`
+and the slots change; references to the AU's `.aupreset` files are cleared. Only
+AUs that aren't native are converted.
+
+Limits: VST3s with any other state format can't take a parameter dump yet, and
+an AU keeping a chunk (`FPCh`) isn't converted. Intel-only VST3s are skipped
+(the CLI runs native, like Live). Verified against Serum (chunks) and OTT
+(parameter dumps, VST2 and AU).
+
+`--probe-vst3 <bundle.vst3> [--state <file>]` is a debugging aid: it lists a
+VST3's classes, parameters and own state, and with `--state` loads a file and
+shows which parameters moved.
 
 ## Batch conversion
 
@@ -78,7 +96,7 @@ index-compatible.
 
 ```sh
 swift run DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals) \\
-  [--include-partial] [--include-native] [--dry-run]
+  [--include-partial] [--include-native] [--substitute-orbit] [--dry-run]
 ```
 
 By default this converts only sets that need it to open. `--include-partial` adds sets
@@ -95,6 +113,25 @@ app itself crawled with its window hidden behind another app (minutes per device
 against about a second from a windowless process). The worker avoids that, Cancel can
 stop it immediately, and if a plugin crashes, that set is marked failed and a new
 worker continues. Save As for a single set still hosts plugins in the app.
+
+## AMBEO Orbit → dearVR MICRO (opt-in)
+
+AMBEO Orbit is discontinued and Intel only. dearVR MICRO is its successor: the same
+controls under the same parameter ids (Clarity became Focus, and there's a new HRTF
+choice), and the same JUCE state format, so every setting carries over. It doesn't
+sound the same, though, even with its "AMBEO Orbit" HRTF: placement and tone differ,
+most at diagonal positions, and MICRO is 2.5 to 7 dB quieter. So replacing it is
+opt-in: the "Replacements" checkbox in a library summary, `--substitute-orbit` on
+`--batch` and `--vst3`, or "Replace with dearVR MICRO" on one device.
+
+Each Orbit becomes MICRO (an AU stays an AU; VST2 and VST3 become VST3) with the AMBEO
+Orbit HRTF and Focus 100, the closest match. MICRO re-saves the state itself, and
+the result is checked against Orbit's values. A Utility named "MICRO level match"
+goes right after it, with the gain that restores Orbit's loudness at that device's
+settings, from a measured table (`OrbitGainTable.swift`; see
+`Calibration/OrbitToMicro`). Parameter slots keep their automation; Clarity's
+slot becomes Focus. If position is automated, the gain fits only the saved
+position, and the conversion notes say so.
 
 ## AU conversion status: Phase 1 (structural swap)
 
@@ -152,9 +189,13 @@ standalone SwiftPM package that happens to live under `packages/`.
 | `DeviceBuilder.swift` | build the replacement `<AuPluginDevice>` / VST3 `<PluginDevice>` |
 | `CVst3Host/` | minimal offline VST3 host in C (load, set/get state, params) |
 | `Vst3Host.swift` | installed-VST3 discovery, compatible UIDs, plugin instances |
-| `Vst2State.swift` | read VST2 presets; wrap them as VST3-compatible state |
+| `Vst2State.swift` | read VST2 presets and AU-wrapped VST2 programs; wrap them for VST3 |
 | `Vst3Migration.swift` | pick target, load state, map parameter slots |
 | `Vst3Cli.swift` | `--vst3` headless migration |
+| `ProbeCli.swift` | `--probe-vst3`: how a VST3 stores its state |
+| `OrbitToMicro.swift` | AMBEO Orbit → dearVR MICRO: identity, settings, AU hosting, device rewrite |
+| `OrbitGainTable.swift` | measured makeup gain for MICRO, by Orbit's settings |
+| `UtilityDevice.swift` | build a Live Utility; allocate ids from `NextPointeeId` |
 | `AppModel.swift` | what's open, scanning, statuses, summaries; shared plugin catalogs |
 | `ConverterModel.swift` | one open set: its DOM, slots, auto-suggest, save |
 | `Library.swift` | folder discovery and the `SetStatus` rule |

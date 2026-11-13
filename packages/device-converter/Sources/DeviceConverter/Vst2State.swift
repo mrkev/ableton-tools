@@ -29,12 +29,26 @@ struct Vst2State {
     self.buffer = buffer
   }
 
-  /// Whether a device holds a chunk preset, without decoding its (possibly
+  /// The preset type (`FBCh`, `FxBk`), without decoding its (possibly
   /// multi-megabyte) buffer.
-  static func isChunkPreset(_ device: XMLElement) -> Bool {
+  static func presetType(_ device: XMLElement) -> String? {
     device.firstChild("PluginDesc")?.firstChild("VstPluginInfo")?
       .firstChild("Preset")?.firstChild("VstPreset")?
-      .childValue("Type").flatMap(Int.init).flatMap(DeviceExtractor.fourCC) == "FBCh"
+      .childValue("Type").flatMap(Int.init).flatMap(DeviceExtractor.fourCC)
+  }
+
+  static func isChunkPreset(_ device: XMLElement) -> Bool { presetType(device) == "FBCh" }
+
+  /// The current program's values from Live's `FxBk` dump, in VST2 index order.
+  /// Live writes each program as a 28-byte name followed by its parameters as
+  /// little-endian floats.
+  func currentProgramParameters() -> [Float]? {
+    guard type == "FxBk", programCount > 0, buffer.count % Int(programCount) == 0 else { return nil }
+    let stride = buffer.count / Int(programCount)
+    guard stride > 28, (stride - 28) % 4 == 0 else { return nil }
+    let program = Int(programNumber >= 0 && programNumber < programCount ? programNumber : 0)
+    let start = buffer.startIndex + program * stride + 28
+    return Data.floats(buffer[start..<start + stride - 28], bigEndian: false)
   }
 
   /// The state a VST2-replacing VST3 accepts in `IComponent::setState`: a
@@ -64,6 +78,53 @@ struct Vst2State {
     out.appendBE(Int32(bank.count))
     out.append(bank)
     return out
+  }
+}
+
+/// A VST2 plugin's settings as the source device holds them, in a form its VST3
+/// can be handed.
+enum LegacyPreset {
+  /// An opaque chunk, for VST3s that read VST2 chunks (JUCE's, Steinberg's wrapper).
+  case chunk(Vst2State)
+  /// Parameter values in VST2 index order: Live's `FxBk` dump of a VST2, or the
+  /// `FxCk` program an Audio Unit built around a VST2 keeps (Xfer's do).
+  case parameters([Float])
+
+  init(device: Device) throws {
+    switch device.format {
+    case .vst:
+      guard let state = Vst2State(device: device.element) else { throw Vst3MigrationError.noState }
+      if state.isChunk {
+        self = .chunk(state)
+      } else if let values = state.currentProgramParameters() {
+        self = .parameters(values)
+      } else {
+        throw Vst3MigrationError.unsupportedPreset(state.type)
+      }
+    case .au:
+      self = .parameters(try Self.auParameters(device.element))
+    default:
+      throw Vst3MigrationError.notVst2
+    }
+  }
+
+  /// An AU's state is a property list; one wrapping a VST2 stores that plugin's
+  /// own program under `vstdata` as a standard `CcnK`/`FxCk` fxProgram.
+  private static func auParameters(_ device: XMLElement) throws -> [Float] {
+    guard let hex = device.firstChild("PluginDesc")?.firstChild("AuPluginInfo")?.firstChild("Preset")?
+      .firstChild("AuPreset")?.firstChild("Buffer")?.stringValue,
+      let buffer = Hex.decode(hex), !buffer.isEmpty,
+      let plist = try? PropertyListSerialization.propertyList(from: buffer, format: nil) as? [String: Any]
+    else { throw Vst3MigrationError.noState }
+    guard let fx = plist["vstdata"] as? Data else { throw Vst3MigrationError.notWrappedVst2 }
+    let bytes = [UInt8](fx)
+    guard bytes.count >= 56, String(decoding: bytes[0..<4], as: UTF8.self) == "CcnK" else {
+      throw Vst3MigrationError.noState
+    }
+    let magic = String(decoding: bytes[8..<12], as: UTF8.self)
+    let count = Int(bytes[24..<28].reduce(UInt32(0)) { $0 << 8 | UInt32($1) })
+    guard magic == "FxCk", bytes.count >= 56 + count * 4 else { throw Vst3MigrationError.unsupportedPreset(magic) }
+    return Data.floats(Data(bytes[56..<56 + count * 4]), bigEndian: true)
   }
 }
 
@@ -109,5 +170,20 @@ extension Data {
 
   mutating func appendBE(fourCC: String) {
     append(contentsOf: Array(fourCC.utf8.prefix(4)))
+  }
+
+  static func floats(_ data: Data, bigEndian: Bool) -> [Float] {
+    let bytes = [UInt8](data)
+    return stride(from: 0, to: bytes.count - 3, by: 4).map { i in
+      let word = bytes[i..<i + 4].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+      return Float(bitPattern: bigEndian ? word : word.byteSwapped)
+    }
+  }
+
+  init(littleEndianFloats values: [Float]) {
+    self.init()
+    for v in values {
+      Swift.withUnsafeBytes(of: v.bitPattern.littleEndian) { append(contentsOf: $0) }
+    }
   }
 }
