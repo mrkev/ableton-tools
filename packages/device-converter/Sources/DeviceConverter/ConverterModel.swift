@@ -10,8 +10,9 @@ enum SlotAction: Equatable, Codable {
   case replaceAU(AudioUnitInfo)
   /// Carries the plugin's state and parameter slots over.
   case replaceVST3(Vst3PluginInfo)
-  /// AMBEO Orbit → dearVR MICRO, plus a Utility that matches the level.
-  case substituteMicro(OrbitToMicro.Target)
+  /// A different plugin that does the same job (AMBEO Orbit → dearVR MICRO,
+  /// FabFilter Pro-C → Pro-C 2).
+  case substitute(Substitution, PluginTarget)
 }
 
 /// The state of one open Live Set: its DOM, devices and per-device choices.
@@ -152,16 +153,16 @@ final class ConverterModel: ObservableObject {
       if let target = convertsToVst3(d) {
         setAction(.replaceVST3(target), for: d)
         queued += 1
-      } else if catalogs.substituteOrbit, document?.predatesVst3 == false,
-                let target = catalogs.orbitTarget(for: d) {
-        setAction(.substituteMicro(target), for: d)
+      } else if let (sub, target) = catalogs.substitution(for: d), catalogs.substitutions.contains(sub),
+                document?.predatesVst3 == false || sub.worksBefore10(target) {
+        setAction(.substitute(sub, target), for: d)
         substituted += 1
       } else if d.format == .vst {
         unavailable.append(d.name)
       }
     }
     status = "\(queued) device(s) will convert to VST3 on save"
-      + (substituted > 0 ? " · \(substituted) Orbit to dearVR MICRO" : "")
+      + (substituted > 0 ? " · \(substituted) replaced by a different plugin" : "")
       + (unavailable.isEmpty ? "" : " · \(unavailable.count) can't: "
         + Set(unavailable).sorted().joined(separator: ", "))
   }
@@ -199,7 +200,7 @@ final class ConverterModel: ObservableObject {
     guard let document else { return }
     let pending = devices.filter { action(for: $0) != .keep }
     let automated = document.automatedTargetIds
-    var toVst3 = 0, toAU = 0, toMicro = 0, warnings = 0, failures = 0
+    var toVst3 = 0, toAU = 0, replaced = 0, warnings = 0, failures = 0
     var lines: [String] = []
 
     for (i, device) in pending.enumerated() {
@@ -225,14 +226,13 @@ final class ConverterModel: ObservableObject {
           lines.append("\(label): not converted: \(error)")
           continue
         }
-      case .substituteMicro(let target):
+      case .substitute(let sub, let target):
         status = "Replacing \(i + 1)/\(pending.count): \(device.name)…"
         await Task.yield()
         do {
-          let c = try await OrbitToMicro.convert(
-            device, target: target, document: document, automatedTargets: automated)
-          OrbitToMicro.apply(c, replacing: device)
-          toMicro += 1
+          let c = try await sub.convert(device, target: target, document: document, automatedTargets: automated)
+          c.apply(replacing: device)
+          replaced += 1
           warnings += c.notes.count
           lines += c.notes.map { "\(label): \($0)" }
           hasUnsavedEdits = true
@@ -253,7 +253,7 @@ final class ConverterModel: ObservableObject {
     }
 
     let notes = (toVst3 > 0 ? ["\(toVst3) to VST3"] : []) + (toAU > 0 ? ["\(toAU) to AU"] : [])
-      + (toMicro > 0 ? ["\(toMicro) Orbit to MICRO"] : [])
+      + (replaced > 0 ? ["\(replaced) replaced"] : [])
       + (warnings > 0 ? ["\(warnings) note(s)"] : []) + (failures > 0 ? ["\(failures) failed"] : [])
     do {
       try document.save(to: destination)

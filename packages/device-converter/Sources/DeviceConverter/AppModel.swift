@@ -15,9 +15,17 @@ final class PluginCatalogs: ObservableObject {
   /// A save or batch is converting. Only one conversion runs at a time, and the
   /// UI that could start another is disabled meanwhile.
   @Published var isHostingPlugins = false
-  /// Opted in to replacing AMBEO Orbit with dearVR MICRO. Remembered.
-  @Published var substituteOrbit = UserDefaults.standard.bool(forKey: OrbitToMicro.defaultsKey) {
-    didSet { UserDefaults.standard.set(substituteOrbit, forKey: OrbitToMicro.defaultsKey) }
+  /// Opted-in replacements of plugins by different ones. Remembered.
+  @Published var substitutions = Set(Substitution.allCases.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) }) {
+    didSet {
+      for s in Substitution.allCases { UserDefaults.standard.set(substitutions.contains(s), forKey: s.defaultsKey) }
+    }
+  }
+
+  func isOptedIn(_ s: Substitution) -> Binding<Bool> {
+    Binding(get: { self.substitutions.contains(s) }, set: { on in
+      if on { self.substitutions.insert(s) } else { self.substitutions.remove(s) }
+    })
   }
 
   var isLoading: Bool { inventory == nil }
@@ -26,15 +34,17 @@ final class PluginCatalogs: ObservableObject {
   var effectiveInventory: PluginInventory? {
     inventory.map {
       var out = $0
-      out.substituteOrbit = substituteOrbit
+      out.substitutions = substitutions
       return out
     }
   }
 
-  /// MICRO for an Orbit device, when opted in and installed.
-  func orbitTarget(for device: Device) -> OrbitToMicro.Target? {
-    guard OrbitToMicro.isOrbit(device) else { return nil }
-    return OrbitToMicro.target(for: device.format, vst3: vst3, audioUnits: audioUnits)
+  /// The replacement installed for a device, opted in or not (a device can be
+  /// replaced on its own).
+  func substitution(for device: Device) -> (Substitution, PluginTarget)? {
+    guard let s = Substitution.matching(device),
+          let target = s.target(for: device.format, vst3: vst3, audioUnits: audioUnits) else { return nil }
+    return (s, target)
   }
 
   init() {
@@ -123,7 +133,7 @@ final class AppModel: ObservableObject {
       }
     }
     optInWatcher = Task { [weak self] in
-      guard let values = self?.catalogs.$substituteOrbit.dropFirst().values else { return }
+      guard let values = self?.catalogs.$substitutions.dropFirst().values else { return }
       for await _ in values {
         // @Published delivers before the property changes.
         await Task.yield()
@@ -211,7 +221,7 @@ final class AppModel: ObservableObject {
           ? model.devices.map { BatchJob.Choice(product: $0.product, action: model.action(for: $0)) } : nil
       })
     }
-    let run = BatchController(jobs: jobs, destination: destination, substituteOrbit: catalogs.substituteOrbit)
+    let run = BatchController(jobs: jobs, destination: destination, substitutions: catalogs.substitutions)
     batch = run
     catalogs.isHostingPlugins = true
     Task {
@@ -341,9 +351,9 @@ final class AppModel: ObservableObject {
     return out
   }
 
-  /// How many sets use AMBEO Orbit, and how many times.
-  func orbitUsage(in sets: [LiveSetEntry]) -> (sets: Int, instances: Int) {
-    let counts = sets.compactMap { scans[$0.url] }.map(PluginInventory.orbitCount).filter { $0 > 0 }
+  /// How many sets a substitution's source plugin is in, and how many times.
+  func usage(of s: Substitution, in sets: [LiveSetEntry]) -> (sets: Int, instances: Int) {
+    let counts = sets.compactMap { scans[$0.url] }.map { PluginInventory.count(of: s, in: $0) }.filter { $0 > 0 }
     return (counts.count, counts.reduce(0, +))
   }
 

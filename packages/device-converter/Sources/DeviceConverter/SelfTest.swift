@@ -13,7 +13,9 @@ enum SelfTest {
     }
     let projects = LibraryDiscovery.projects(for: root)
     let sets = projects.flatMap(\.sets)
-    let inventory = PluginInventory.loadNow()
+    var inventory = PluginInventory.loadNow()
+    // Opt-ins as the batch takes them (--substitute-orbit, --substitute-pro-c).
+    inventory.substitutions = Substitution.optedIn(arguments: CommandLine.arguments)
     print("\(root): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
 
     var counts: [SetStatus.Kind: Int] = [:]

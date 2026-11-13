@@ -176,9 +176,9 @@ struct DeviceRow: View {
     case .replaceAU(let au):
       SlotLabel(icon: "exclamationmark.triangle.fill", title: au.name,
                 subtitle: "default settings", badge: "AU", tint: .orange)
-    case .substituteMicro(let target):
-      SlotLabel(icon: "arrow.triangle.swap", title: OrbitToMicro.microName,
-                subtitle: "sounds different · level matched", badge: target.badge, tint: .orange)
+    case .substitute(let sub, let target):
+      SlotLabel(icon: "arrow.triangle.swap", title: sub.targetName,
+                subtitle: sub.outcome, badge: target.badge, tint: .orange)
     }
   }
 
@@ -198,15 +198,17 @@ struct DeviceRow: View {
     case nil:
       EmptyView()
     }
-    if OrbitToMicro.isOrbit(device) {
-      if model.document?.predatesVst3 == true {
-        Button("dearVR MICRO: re-save in Live 10+ first") {}.disabled(true)
-      } else if let target = catalogs.orbitTarget(for: device) {
-        Button("Replace with dearVR MICRO (sounds different, level matched)") {
-          model.setAction(.substituteMicro(target), for: device)
+    if let sub = Substitution.matching(device) {
+      if let (_, target) = catalogs.substitution(for: device) {
+        if model.document?.predatesVst3 == true && !sub.worksBefore10(target) {
+          Button("\(sub.targetName): re-save in Live 10+ first") {}.disabled(true)
+        } else {
+          Button("Replace with \(sub.targetName) (\(sub.outcome.replacingOccurrences(of: " · ", with: ", ")))") {
+            model.setAction(.substitute(sub, target), for: device)
+          }
         }
       } else {
-        Button("dearVR MICRO: no native \(device.format == .au ? "AU" : "VST3") installed") {}.disabled(true)
+        Button("\(sub.targetName): no native build installed") {}.disabled(true)
       }
     }
     Divider()

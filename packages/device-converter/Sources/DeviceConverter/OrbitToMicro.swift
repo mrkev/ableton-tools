@@ -51,34 +51,19 @@ enum OrbitToMicro {
     }
   }
 
-  /// The MICRO build that replaces an Orbit device.
-  enum Target: Equatable, Codable {
-    case vst3(Vst3PluginInfo)
-    case au(AudioUnitInfo)
-
-    var format: DeviceFormat {
-      switch self {
-      case .vst3: return .vst3
-      case .au: return .au
-      }
-    }
-
-    var badge: String { format.badge ?? "" }
-  }
-
   /// An AU stays an AU; VST2 and VST3 become VST3 (MICRO has no VST2). `nil`
   /// when no native MICRO is installed in that format.
   static func target(
     for format: DeviceFormat, vst3: [Vst3PluginInfo], audioUnits: [AudioUnitInfo]
-  ) -> Target? {
+  ) -> PluginTarget? {
     switch format {
     case .au:
       return audioUnits.first {
         $0.isNative && Int32(bitPattern: $0.subTypeCode) == microAuSubType
           && Int32(bitPattern: $0.manufacturerCode) == microAuManufacturer
-      }.map(Target.au)
+      }.map(PluginTarget.au)
     case .vst, .vst3:
-      return vst3.first { $0.name == microName }.map(Target.vst3)
+      return vst3.first { $0.name == microName }.map(PluginTarget.vst3)
     default:
       return nil
     }
@@ -162,20 +147,12 @@ enum OrbitToMicro {
 
   // MARK: Conversion
 
-  struct Conversion {
-    let replacement: XMLElement
-    /// Goes right after `replacement`.
-    let utility: XMLElement
-    let gainDb: Double
-    var notes: [String]
-  }
-
   /// Builds the MICRO device and its Utility. Hosts MICRO, so call it on the main
   /// thread. Nothing in `document` changes except its id counter, until `apply`.
   @MainActor
   static func convert(
-    _ device: Device, target: Target, document: AlsDocument, automatedTargets: Set<String>
-  ) async throws -> Conversion {
+    _ device: Device, target: PluginTarget, document: AlsDocument, automatedTargets: Set<String>
+  ) async throws -> SubstitutionResult {
     guard isOrbit(device) else { throw OrbitError.notOrbit }
     guard let orbit = settings(of: device) else { throw OrbitError.noState }
     let juce = JuceState.encode(xml: try microXml(from: orbit))
@@ -201,7 +178,7 @@ enum OrbitToMicro {
         "version": 0, "name": "Untitled", "jucePluginState": juce,
       ])
       try verify(state["jucePluginState"] as? Data, against: orbit)
-      parameters = params
+      parameters = params.map(\.asVst3Parameter)
       let slots = try slotPlan(device, parameters: parameters, automated: automatedTargets, notes: &notes)
       replacement = try buildAu(from: device, target: au, state: state, parameterCount: params.count, slots: slots)
     }
@@ -225,18 +202,8 @@ enum OrbitToMicro {
     }
     let utility = try UtilityDevice.make(
       gainDb: gain, isOn: device.enabled, name: utilityName, document: document)
-    return Conversion(replacement: replacement, utility: utility, gainDb: gain, notes: notes)
-  }
-
-  /// Swaps the device for MICRO and puts the Utility right after it.
-  static func apply(_ c: Conversion, replacing device: Device) {
-    let parent = device.parent
-    let index = device.element.index
-    let nextId = (parent.childElements.compactMap { $0.attribute(forName: "Id")?.stringValue.flatMap(Int.init) }
-      .max() ?? -1) + 1
-    c.utility.attribute(forName: "Id")?.stringValue = String(nextId)
-    parent.replaceChild(at: index, with: c.replacement)
-    parent.insertChild(c.utility, at: index + 1)
+    return SubstitutionResult(
+      replacement: replacement, follower: utility, detail: String(format: "Utility %+.2f dB", gain), notes: notes)
   }
 
   private static func onIsAutomated(_ device: Device, _ automated: Set<String>) -> Bool {
@@ -247,35 +214,27 @@ enum OrbitToMicro {
 
   // MARK: Parameter slots
 
-  /// What each configured slot becomes, by its position in `ParameterList`.
-  private struct SlotChange {
-    let position: Int
-    let id: Int32
-    let name: String
-    let manual: Double?
-  }
-
   /// Slots are matched by name. Clarity's slot becomes Focus, unless Clarity is
   /// automated: its envelope wouldn't mean the same thing for Focus.
   private static func slotPlan(
     _ device: Device, parameters: [Vst3Instance.Parameter], automated: Set<String>, notes: inout [String]
-  ) throws -> [SlotChange] {
+  ) throws -> [ParameterSlots.Change] {
     guard let list = device.element.firstChild("ParameterList") else { return [] }
     let byTitle = Dictionary(parameters.map { (titleKey($0.title), $0) }, uniquingKeysWith: { a, _ in a })
     let slots = Vst3Migration.configuredSlots(device.element)
-    var out: [SlotChange] = []
+    var out: [ParameterSlots.Change] = []
     for (position, element) in list.childElements.enumerated() {
       guard let slot = slots.first(where: { $0.element === element }) else { continue }
       let isAutomated = slot.hasInlineAutomation || slot.automationTarget.map(automated.contains) == true
       let isClarity = titleKey(slot.name) == "clarity"
       if isClarity && isAutomated {
         notes.append("Clarity is automated; that automation is dropped, since Focus works differently")
-        out.append(SlotChange(position: position, id: -1, name: "", manual: nil))
+        out.append(ParameterSlots.Change(position: position, id: -1, name: "", manual: nil))
         continue
       }
       guard let p = byTitle[isClarity ? "focus" : titleKey(slot.name)] else {
         notes.append("parameter '\(slot.name)' has no MICRO match; it will be unbound")
-        out.append(SlotChange(position: position, id: -1, name: "", manual: nil))
+        out.append(ParameterSlots.Change(position: position, id: -1, name: "", manual: nil))
         continue
       }
       // Live's value should be what the state holds; a difference means the
@@ -284,24 +243,11 @@ enum OrbitToMicro {
         throw OrbitError.settingsNotCarried(
           String(format: "'%@' loads as %.3f but Live had %.3f", slot.name, p.normalized, live))
       }
-      out.append(SlotChange(
+      out.append(ParameterSlots.Change(
         position: position, id: Int32(bitPattern: p.id), name: p.title,
         manual: isClarity ? p.normalized : nil))
     }
     return out
-  }
-
-  private static func applySlots(_ slots: [SlotChange], to device: XMLElement) {
-    guard let list = device.firstChild("ParameterList")?.childElements else { return }
-    for s in slots where s.position < list.count {
-      let element = list[s.position]
-      element.firstChild("ParameterId")?.attribute(forName: "Value")?.stringValue = String(s.id)
-      if s.id >= 0 { element.firstChild("ParameterName")?.attribute(forName: "Value")?.stringValue = s.name }
-      if let manual = s.manual {
-        element.firstChild("ParameterValue")?.firstChild("Manual")?.attribute(forName: "Value")?.stringValue =
-          String(manual)
-      }
-    }
   }
 
   private static func titleKey(_ s: String) -> String {
@@ -311,7 +257,7 @@ enum OrbitToMicro {
   // MARK: Building devices
 
   private static func buildVst3(
-    from device: Device, target: Vst3PluginInfo, processor: Data, controller: Data, slots: [SlotChange]
+    from device: Device, target: Vst3PluginInfo, processor: Data, controller: Data, slots: [ParameterSlots.Change]
   ) throws -> XMLElement {
     let built: XMLElement
     switch device.format {
@@ -339,45 +285,25 @@ enum OrbitToMicro {
     default:
       throw OrbitError.notOrbit
     }
-    applySlots(slots, to: built)
+    ParameterSlots.apply(slots, to: built)
     renameReferences(in: built, branch: "device:vst3:audiofx:\(Vst3Uid.uuidString(target.cid))")
     return built
   }
 
   private static func buildAu(
-    from device: Device, target: AudioUnitInfo, state: [String: Any], parameterCount: Int, slots: [SlotChange]
+    from device: Device, target: AudioUnitInfo, state: [String: Any], parameterCount: Int,
+    slots: [ParameterSlots.Change]
   ) throws -> XMLElement {
-    guard let copy = device.element.copy() as? XMLElement,
-          let desc = copy.firstChild("PluginDesc"),
-          let info = desc.firstChild("AuPluginInfo"),
-          let preset = auPreset(desc)
-    else { throw OrbitError.unexpectedLayout }
-    let subType = String(Int32(bitPattern: target.subTypeCode))
-    let manufacturer = String(Int32(bitPattern: target.manufacturerCode))
-    func set(_ e: XMLElement, _ name: String, _ value: String) {
-      e.firstChild(name)?.attribute(forName: "Value")?.stringValue = value
-    }
-    set(info, "ComponentSubType", subType)
-    set(info, "ComponentManufacturer", manufacturer)
-    set(info, "Name", target.name)
-    set(info, "Manufacturer", target.manufacturer)
-    set(info, "ParameterCount", String(parameterCount))
-    set(preset, "SubType", subType)
-    set(preset, "Manufacturer", manufacturer)
-    // Live stores AU state as an XML property list.
-    let plist = try PropertyListSerialization.data(fromPropertyList: state, format: .xml, options: 0)
-    guard let buffer = preset.firstChild("Buffer") else { throw OrbitError.unexpectedLayout }
-    DeviceBuilder.replaceBlob(buffer, with: plist)
-    applySlots(slots, to: copy)
-    let type = String(Int32(bitPattern: target.typeCode))
-    renameReferences(in: copy, branch: "device:au:audiofx:\(manufacturer):\(subType):\(type)")
-    return copy
+    guard let built = try? AuRetarget.build(
+      from: device, to: target, state: state, parameterCount: parameterCount, slots: slots,
+      renameReferences: renameReferences) else { throw OrbitError.unexpectedLayout }
+    return built
   }
 
   /// Browser references (`BranchDeviceId`, preset paths under Ableton's AU preset
   /// cache, `query:Find#AMBEO%20Orbit`) would otherwise still name Orbit. The
   /// user's own device name and annotation are left alone.
-  private static func renameReferences(in device: XMLElement, branch: String) {
+  static func renameReferences(in device: XMLElement, branch: String) {
     var stack = [device]
     while let e = stack.popLast() {
       switch e.name {
@@ -405,7 +331,6 @@ enum OrbitError: Error, CustomStringConvertible {
   case noStateBack
   case settingsNotCarried(String)
   case unexpectedLayout
-  case auUnavailable(String)
 
   var description: String {
     switch self {
@@ -415,7 +340,6 @@ enum OrbitError: Error, CustomStringConvertible {
     case .noStateBack: return "dearVR MICRO didn't return its settings"
     case .settingsNotCarried(let what): return "settings didn't carry over: \(what)"
     case .unexpectedLayout: return "the device isn't laid out as expected"
-    case .auUnavailable(let why): return "couldn't load dearVR MICRO: \(why)"
     }
   }
 }
@@ -457,12 +381,33 @@ enum JuceState {
   }
 }
 
+/// One Audio Unit parameter, in its own units.
+struct AuParameter {
+  let address: UInt64
+  let name: String
+  let value: Float
+  let minValue: Float
+  let maxValue: Float
+
+  /// Where Live keeps an AU parameter's value: 0 to 1 across its range.
+  var normalized: Double {
+    maxValue > minValue ? Double((value - minValue) / (maxValue - minValue)) : 0
+  }
+
+  var asVst3Parameter: Vst3Instance.Parameter {
+    Vst3Instance.Parameter(id: UInt32(truncatingIfNeeded: address), title: name, normalized: Double(value))
+  }
+}
+
 /// Loads an Audio Unit in this process to let it re-save a state.
 @MainActor
 enum AuHost {
+  /// Loads `fullState` (or the AU's defaults), then sets `values` by parameter
+  /// name, in each parameter's own units. Returns the state the AU then saves, and
+  /// its parameters.
   static func load(
-    _ au: AudioUnitInfo, fullState: [String: Any]
-  ) async throws -> (state: [String: Any], parameters: [Vst3Instance.Parameter]) {
+    _ au: AudioUnitInfo, fullState: [String: Any]? = nil, values: [String: Float] = [:]
+  ) async throws -> (state: [String: Any], parameters: [AuParameter]) {
     let description = AudioComponentDescription(
       componentType: au.typeCode, componentSubType: au.subTypeCode, componentManufacturer: au.manufacturerCode,
       componentFlags: 0, componentFlagsMask: 0)
@@ -470,16 +415,36 @@ enum AuHost {
     do {
       unit = try await AVAudioUnit.instantiate(with: description, options: [])
     } catch {
-      throw OrbitError.auUnavailable(error.localizedDescription)
+      throw AuHostError.unavailable(au.name, error.localizedDescription)
     }
-    unit.auAudioUnit.fullState = fullState
+    if let fullState { unit.auAudioUnit.fullState = fullState }
     // JUCE applies some of a state on the main thread.
     Vst3Instance.pumpMainRunLoop()
-    guard let saved = unit.auAudioUnit.fullState else { throw OrbitError.noStateBack }
-    let parameters = (unit.auAudioUnit.parameterTree?.allParameters ?? []).map {
-      Vst3Instance.Parameter(id: UInt32(truncatingIfNeeded: $0.address), title: $0.displayName,
-                             normalized: Double($0.value))
+    let tree = unit.auAudioUnit.parameterTree?.allParameters ?? []
+    for (name, value) in values {
+      guard let p = tree.first(where: { $0.displayName == name }) else { throw AuHostError.noParameter(au.name, name) }
+      p.value = value
+    }
+    if !values.isEmpty { Vst3Instance.pumpMainRunLoop() }
+    guard let saved = unit.auAudioUnit.fullState else { throw AuHostError.noStateBack(au.name) }
+    let parameters = tree.map {
+      AuParameter(address: $0.address, name: $0.displayName, value: $0.value, minValue: $0.minValue,
+                  maxValue: $0.maxValue)
     }
     return (saved, parameters)
+  }
+}
+
+enum AuHostError: Error, CustomStringConvertible {
+  case unavailable(String, String)
+  case noParameter(String, String)
+  case noStateBack(String)
+
+  var description: String {
+    switch self {
+    case .unavailable(let name, let why): return "couldn't load \(name): \(why)"
+    case .noParameter(let name, let p): return "\(name) has no parameter '\(p)'"
+    case .noStateBack(let name): return "\(name) didn't return its settings"
+    }
   }
 }

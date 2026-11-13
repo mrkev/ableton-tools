@@ -3,19 +3,20 @@ import Foundation
 /// Headless VST2 → VST3 migration of one Live Set (plus Intel-only AUs built
 /// around a VST2 whose VST3 replaces them):
 ///
-///     DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit]
+///     DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit] [--substitute-pro-c]
 ///                     [--dry-run] [--verbose] [--force]
 ///
 /// Converts every VST2 device that has an installed (and natively loadable)
 /// VST3 replacement, writes a new set (default: `<name>-vst3.als` beside the
 /// original — the original is never touched) and prints a per-device report.
-/// `--substitute-orbit` also replaces AMBEO Orbit with dearVR MICRO.
+/// `--substitute-orbit` also replaces AMBEO Orbit with dearVR MICRO, and
+/// `--substitute-pro-c` FabFilter Pro-C with Pro-C 2.
 enum Vst3Cli {
   @MainActor static func run(arguments args: [String]) async -> Int32 {
     setlinebuf(stdout)
     guard let i = args.firstIndex(of: "--vst3"), i + 1 < args.count else {
-      print("usage: DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit]"
-        + " [--dry-run] [--verbose] [--force]")
+      print("usage: DeviceConverter --vst3 <in.als> [--out <out.als>] "
+        + Substitution.allCases.map { "[\($0.cliFlag)] " }.joined() + "[--dry-run] [--verbose] [--force]")
       return 2
     }
     let input = URL(fileURLWithPath: args[i + 1])
@@ -34,19 +35,19 @@ enum Vst3Cli {
       }
       let devices = DeviceExtractor.extractAll(doc.root)
       var inventory = PluginInventory.loadNow()
-      inventory.substituteOrbit = args.contains("--substitute-orbit")
+      inventory.substitutions = Substitution.optedIn(arguments: args)
       let catalog = inventory.vst3
       let automated = doc.automatedTargetIds
       print("\(input.lastPathComponent): \(devices.count) devices; \(catalog.count) loadable VST3 classes installed")
 
       var converted = 0, skipped = 0
-      for d in devices where d.format == .vst || d.format == .au || OrbitToMicro.isOrbit(d) {
+      for d in devices where d.format == .vst || d.format == .au || Substitution.matching(d) != nil {
         let label = "\(d.trackName) › \(d.name)"
-        if OrbitToMicro.isOrbit(d), let target = inventory.orbitTarget(for: d.format) {
+        if let (sub, target) = inventory.substitution(for: d) {
           do {
-            let c = try await OrbitToMicro.convert(d, target: target, document: doc, automatedTargets: automated)
-            OrbitToMicro.apply(c, replacing: d)
-            print(String(format: "  ✓ %@ → dearVR MICRO %@ + Utility %+.2f dB", label, target.badge, c.gainDb))
+            let c = try await sub.convert(d, target: target, document: doc, automatedTargets: automated)
+            c.apply(replacing: d)
+            print("  ✓ \(label) → \(sub.targetName) \(target.badge) · \(c.detail)")
             for n in c.notes { print("      ⚠︎ \(n)") }
             converted += 1
           } catch {
@@ -54,8 +55,9 @@ enum Vst3Cli {
           }
           continue
         }
-        if OrbitToMicro.isOrbit(d) {
-          print("  – \(label): AMBEO Orbit; pass --substitute-orbit to replace it with dearVR MICRO"); skipped += 1
+        if let sub = Substitution.matching(d) {
+          print("  – \(label): \(sub.sourceName); pass \(sub.cliFlag) to replace it with \(sub.targetName)")
+          skipped += 1
           continue
         }
         let target: Vst3PluginInfo

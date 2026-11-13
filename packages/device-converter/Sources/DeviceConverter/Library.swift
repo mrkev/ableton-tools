@@ -146,11 +146,15 @@ enum SetStatus: Hashable {
       }
       return stuck.isEmpty ? .converted : .stuck(stuck, convertible: 0)
     }
-    let convertible = scan.predatesVst3 ? 0 : inventory.convertibleCount(in: scan)
+    let convertible = scan.predatesVst3
+      ? inventory.loads(in: scan).filter { $0.load.needsWork && !$0.load.needsLive10 }.count
+      : inventory.convertibleCount(in: scan)
     let stuck = inventory.stuckPlugins(in: scan)
     if !stuck.isEmpty { return .stuck(stuck, convertible: convertible) }
-    let needed = inventory.loads(in: scan).filter(\.load.needsWork).count
-    if needed > 0 { return scan.predatesVst3 ? .resaveFirst(needed) : .afterConverting(needed) }
+    let work = inventory.loads(in: scan).map(\.load).filter(\.needsWork)
+    if !work.isEmpty {
+      return scan.predatesVst3 && work.contains(where: \.needsLive10) ? .resaveFirst(work.count) : .afterConverting(work.count)
+    }
     return .opens(convertible: convertible)
   }
 

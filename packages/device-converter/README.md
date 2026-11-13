@@ -92,11 +92,11 @@ shows which parameters moved.
 
 ## Batch conversion
 
-"Convert Sets to VST3…" in a library or project summary, or from the command line:
+"Convert Sets…" in a library or project summary, or from the command line:
 
 ```sh
 swift run DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals) \\
-  [--include-partial] [--include-native] [--substitute-orbit] [--dry-run]
+  [--include-partial] [--include-native] [--substitute-orbit] [--substitute-pro-c] [--dry-run]
 ```
 
 By default this converts only sets that need it to open. `--include-partial` adds sets
@@ -114,15 +114,22 @@ against about a second from a windowless process). The worker avoids that, Cance
 stop it immediately, and if a plugin crashes, that set is marked failed and a new
 worker continues. Save As for a single set still hosts plugins in the app.
 
-## AMBEO Orbit → dearVR MICRO (opt-in)
+## Replacements (opt-in)
+
+Some Intel-only plugins have no native build, but a different plugin does the same
+job. Replacing them is opt-in, because the result doesn't sound identical: a
+checkbox per replacement under "Replacements" in a library summary, a flag on
+`--batch` and `--vst3`, or "Replace with …" on one device. Each lives in
+`Substitution.swift` plus its own file; AU devices are rewritten in place
+(`AuRetarget`). An AU → AU replacement also works in sets saved before Live 10.
+
+### AMBEO Orbit → dearVR MICRO (`--substitute-orbit`)
 
 AMBEO Orbit is discontinued and Intel only. dearVR MICRO is its successor: the same
 controls under the same parameter ids (Clarity became Focus, and there's a new HRTF
 choice), and the same JUCE state format, so every setting carries over. It doesn't
 sound the same, though, even with its "AMBEO Orbit" HRTF: placement and tone differ,
-most at diagonal positions, and MICRO is 2.5 to 7 dB quieter. So replacing it is
-opt-in: the "Replacements" checkbox in a library summary, `--substitute-orbit` on
-`--batch` and `--vst3`, or "Replace with dearVR MICRO" on one device.
+most at diagonal positions, and MICRO is 2.5 to 7 dB quieter.
 
 Each Orbit becomes MICRO (an AU stays an AU; VST2 and VST3 become VST3) with the AMBEO
 Orbit HRTF and Focus 100, the closest match. MICRO re-saves the state itself, and
@@ -132,6 +139,27 @@ settings, from a measured table (`OrbitGainTable.swift`; see
 `Calibration/OrbitToMicro`). Parameter slots keep their automation; Clarity's
 slot becomes Focus. If position is automated, the gain fits only the saved
 position, and the conversion notes say so.
+
+### FabFilter Pro-C → Pro-C 2 (`--substitute-pro-c`)
+
+Pro-C is Intel only (an AU here). Pro-C 2 has the same three styles (Clean, Classic,
+Opto) and most of the same controls, but can't read Pro-C's state, so each setting
+is translated (`ProCToProC2.swift`) and set on Pro-C 2's AU by name, then read back.
+Where the two differ, the translation was measured by rendering both offline
+(`ProCTables.swift`, generated; see `Calibration/ProCToProC2`):
+
+- Soft knee is Pro-C 2's 24 dB knee; Classic needs its ratio 0.02 higher.
+- Attack and release use different curves, and equal milliseconds don't behave the
+  same, so the closest-sounding times were fitted on program material per style,
+  with and without auto release.
+- Pro-C 2's Auto Gain makeup differs, so it's off, and Pro-C's own makeup (which
+  shrinks for slow attacks) goes into the wet gain.
+- Pro-C's expert side-chain mixes are Pro-C 2's stereo link; its side-chain filters
+  sit half an octave off Pro-C 2's.
+
+Pro-C 2 has no mid/side processing and its attack stops at 250 ms; devices using
+either get a note. Parameter slots point at Pro-C 2's counterparts; automation on
+them is dropped, since the ranges differ (none of the library's is automated).
 
 ## AU conversion status: Phase 1 (structural swap)
 
@@ -195,6 +223,9 @@ standalone SwiftPM package that happens to live under `packages/`.
 | `ProbeCli.swift` | `--probe-vst3`: how a VST3 stores its state |
 | `OrbitToMicro.swift` | AMBEO Orbit → dearVR MICRO: identity, settings, AU hosting, device rewrite |
 | `OrbitGainTable.swift` | measured makeup gain for MICRO, by Orbit's settings |
+| `Substitution.swift` | opt-in replacements by a different plugin; shared AU rewrite and slot re-pointing |
+| `ProCToProC2.swift` | FabFilter Pro-C → Pro-C 2: settings translation, AU hosting, slots |
+| `ProCTables.swift` | measured Pro-C → Pro-C 2 timing, makeup and link tables (generated) |
 | `UtilityDevice.swift` | build a Live Utility; allocate ids from `NextPointeeId` |
 | `AppModel.swift` | what's open, scanning, statuses, summaries; shared plugin catalogs |
 | `ConverterModel.swift` | one open set: its DOM, slots, auto-suggest, save |

@@ -251,10 +251,10 @@ private struct LibrarySummaryView: View {
 
         let candidates = app.batchCandidates(in: sets)
         if !candidates.isEmpty {
-          Button("Convert Sets to VST3…") { showingBatchSheet = true }
+          Button("Convert Sets…") { showingBatchSheet = true }
             .disabled(app.isScanning || catalogs.isLoading)
             .sheet(isPresented: $showingBatchSheet) {
-              BatchSheet(candidates: candidates, replacesOrbit: catalogs.substituteOrbit) { chosen, destination in
+              BatchSheet(candidates: candidates, replacing: Substitution.allCases.filter(catalogs.substitutions.contains)) { chosen, destination in
                 showingBatchSheet = false
                 app.startBatch(sets: chosen, destination: destination)
               } onCancel: {
@@ -263,9 +263,14 @@ private struct LibrarySummaryView: View {
             }
         }
 
-        let orbit = app.orbitUsage(in: sets)
-        if orbit.sets > 0 {
-          OrbitReplacementSection(sets: orbit.sets, devices: orbit.instances)
+        let usages = Substitution.allCases.map { ($0, app.usage(of: $0, in: sets)) }.filter { $0.1.sets > 0 }
+        if !usages.isEmpty {
+          VStack(alignment: .leading, spacing: 14) {
+            Text("Replacements").font(.headline)
+            ForEach(usages, id: \.0) { sub, usage in
+              ReplacementOption(substitution: sub, sets: usage.sets, devices: usage.instances)
+            }
+          }
         }
 
         if !blocking.isEmpty {
@@ -300,49 +305,42 @@ private struct LibrarySummaryView: View {
   }
 }
 
-// MARK: - Batch
-
-/// Chooses what a batch converts and where it writes.
-/// The opt-in for replacing AMBEO Orbit with dearVR MICRO.
-private struct OrbitReplacementSection: View {
+/// The opt-in for one substitution.
+private struct ReplacementOption: View {
   @EnvironmentObject var catalogs: PluginCatalogs
+  let substitution: Substitution
   let sets: Int
   let devices: Int
 
   private var isInstalled: Bool {
-    [DeviceFormat.vst3, .au].contains {
-      OrbitToMicro.target(for: $0, vst3: catalogs.vst3, audioUnits: catalogs.audioUnits) != nil
-    }
-  }
-
-  private var explanation: String {
-    "AMBEO Orbit is in \(sets) \(sets == 1 ? "set" : "sets") (\(devices) \(devices == 1 ? "device" : "devices")). "
-      + "It's discontinued and Intel only. dearVR MICRO is its successor, and the settings carry over, "
-      + "but it doesn't sound the same: placement and tone shift, most at diagonal positions. Each MICRO "
-      + "uses its AMBEO Orbit HRTF at Focus 100, followed by a Utility that matches Orbit's loudness for "
-      + "that device."
+    substitution.isInstalled(vst3: catalogs.vst3, audioUnits: catalogs.audioUnits)
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Replacements").font(.headline)
-      Toggle("Replace AMBEO Orbit with dearVR MICRO", isOn: $catalogs.substituteOrbit)
+    VStack(alignment: .leading, spacing: 6) {
+      Toggle("Replace \(substitution.sourceName) with \(substitution.targetName)",
+             isOn: catalogs.isOptedIn(substitution))
         .toggleStyle(.checkbox)
         .disabled(catalogs.isLoading || !isInstalled || catalogs.isHostingPlugins)
-      Text(explanation)
+      Text("\(substitution.sourceName) is in \(sets) \(sets == 1 ? "set" : "sets") "
+        + "(\(devices) \(devices == 1 ? "device" : "devices")). " + substitution.explanation)
         .font(.caption).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 560, alignment: .leading)
       if !catalogs.isLoading && !isInstalled {
-        Text("Install dearVR MICRO to use this.").font(.caption).foregroundStyle(.orange)
+        Text("Install \(substitution.targetName) to use this.").font(.caption).foregroundStyle(.orange)
       }
     }
   }
 }
 
+// MARK: - Batch
+
+/// Chooses what a batch converts and where it writes.
 private struct BatchSheet: View {
   let candidates: BatchCandidates
-  let replacesOrbit: Bool
+  /// Opted-in substitutions the batch will make.
+  let replacing: [Substitution]
   let onStart: ([LiveSetEntry], BatchDestination) -> Void
   let onCancel: () -> Void
 
@@ -409,8 +407,8 @@ private struct BatchSheet: View {
         }
       }
 
-      if replacesOrbit {
-        Text("AMBEO Orbit devices will be replaced with dearVR MICRO, which sounds different.")
+      ForEach(replacing) { sub in
+        Text("\(sub.sourceName) devices will be replaced with \(sub.targetName), which doesn't sound identical.")
           .font(.caption).foregroundStyle(.orange)
       }
 

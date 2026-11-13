@@ -66,11 +66,18 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
       app down.
 - [ ] **Try `--force` on a Live 9 set**, then open the result in Live 11. Only matters
       for sets that need converting; Live 9 sets with native plugins already open.
-- [ ] **Find native builds of the top blockers** — FabFilter Pro-C (40 sets),
-      TapeStop (21 + 4 as AU), DJMFilter (9), Cthulhu (4, the installed build is
-      Intel only). The library's "Plugins holding sets back" has the full list.
-      Now native: Massive 1.7, DimensionExpander, FabFilter Pro-Q 2.
+- [ ] **Find native builds of the top blockers** — TapeStop (21 + 4 as AU),
+      DJMFilter (9), Cthulhu (4, the installed build is Intel only). The library's
+      "Plugins holding sets back" has the full list. Now native: Massive 1.7,
+      DimensionExpander, FabFilter Pro-Q 2. FabFilter Pro-C has a replacement.
 - [x] **AMBEO Orbit → dearVR MICRO**, opt-in, with a level-matching Utility.
+- [x] **FabFilter Pro-C → Pro-C 2**, opt-in, settings translated and calibrated by render.
+- [ ] **Open a Pro-C → Pro-C 2 conversion in Live 11**: Pro-C 2 loads with the translated
+      settings, its slots show the right values, and it sounds like the original.
+- [ ] **Pro-C mid/side devices** (10, one per set in MessengerSettings, beats, encoded,
+      wobble): Pro-C 2 can't compress mid and side separately. An Audio Effect Rack
+      splitting mid and side into two Pro-C 2 chains could; Live has no M/S encoder,
+      so check whether Utility can do the split first.
 - [ ] **Open an Orbit → MICRO conversion in Live 11**: MICRO loads with its settings,
       the Utility sits after it, and the level matches Orbit by ear.
 - [ ] **Check that a Massive AU set loads its patch** in native Live (1.7 is native, but
