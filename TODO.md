@@ -51,7 +51,8 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
       (indices/counts differ across formats). Preserves most settings.
 - [ ] **Learned identity map** — bootstrap a VST3-UID → AU-component-code table
       from sets that contain both formats (helps when only the VST3 is present).
-- [ ] Bundle as a distributable `.app` (currently a CLI-buildable SwiftPM exe).
+- [x] Bundle as an `.app` (`make-app.sh`; ad hoc signed, for this Mac).
+- [ ] Developer ID signing and notarization, if it's ever shared.
 - [x] **VST2 → VST3: confirm in Live 11 (native)** that a converted set opens
       and works.
 - [x] **VST2 → VST3 in the GUI** — a "Convert to VST3" slot action next to the

@@ -201,8 +201,25 @@ swift run DeviceConverter --selftest "/path/to/Set.als"
 swift run DeviceConverter --selftest-library "/path/to/Projects"
 ```
 
+### As an app
+
+```sh
+./make-app.sh             # → build/Device Converter.app
+./make-app.sh --install   # also copies it to ~/Applications
+```
+
+Wraps the release build in a bundle (Info.plist, icon from `App/AppIcon.icns`, drawn
+by `App/make-icon.swift`) and signs it ad hoc for this Mac. Open a library, project or
+set with "Open With" or by dropping it on the Dock icon; the app is only an alternate
+handler for `.als`, so double-clicking a set still opens Live. The command-line modes
+work through `Device Converter.app/Contents/MacOS/DeviceConverter`. Inside the bundle,
+settings (like the opted-in replacements) are kept under its bundle id,
+`dev.ableton-tools.device-converter`, separately from `swift run`'s.
+
 Requires the macOS toolchain (Xcode). Not part of the pnpm workspace — it's a
-standalone SwiftPM package that happens to live under `packages/`.
+standalone SwiftPM package that happens to live under `packages/`. It stays a package
+rather than an Xcode project: open `Package.swift` in Xcode for the debugger and
+previews.
 
 ## Layout
 

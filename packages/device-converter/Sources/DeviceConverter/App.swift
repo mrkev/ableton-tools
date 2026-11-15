@@ -88,6 +88,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+  /// A set or folder from Finder ("Open With", or dropped on the Dock icon).
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard let url = urls.first else { return }
+    model.open(url: url)
+    window?.makeKeyAndOrderFront(nil)
+  }
+
   @objc func openDocument() { model.presentOpenPanel() }
   @objc func saveDocument() { model.activeModel?.presentSavePanel() }
   @objc func rescanLibrary() { model.rescan() }
@@ -98,6 +105,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appItem = NSMenuItem()
     mainMenu.addItem(appItem)
     let appMenu = NSMenu()
+    appMenu.addItem(
+      withTitle: "About Device Converter", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+      keyEquivalent: "")
+    appMenu.addItem(.separator())
     appMenu.addItem(
       withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     appItem.submenu = appMenu
