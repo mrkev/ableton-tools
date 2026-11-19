@@ -99,6 +99,11 @@ final class ConverterModel: ObservableObject {
       if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
       if catalogs.isLoadingVst3 { return .unavailable("scanning VST3s…") }
     }
+    // Only an AU that can't load natively (Massive's AU is native; OTT's isn't).
+    if device.format == .au {
+      guard let au = LiveSetScan.AuPlugin(device: device), let inventory = catalogs.inventory,
+            case .needsConversion = inventory.load(au) else { return nil }
+    }
     guard let availability = Vst3Availability.resolve(device, catalog: catalogs.vst3) else { return nil }
     if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
     return availability
@@ -109,14 +114,9 @@ final class ConverterModel: ObservableObject {
     device.isConvertible || vst3Availability(of: device) != nil
   }
 
-  /// "Convert to VST3" takes every VST2 with a VST3, but only the AUs that
-  /// need theirs: a native AU loads as it is.
+  /// "Convert to VST3" takes every VST2 with a VST3, and the AUs that need theirs.
   private func convertsToVst3(_ device: Device) -> Vst3PluginInfo? {
     guard case .available(let target)? = vst3Availability(of: device) else { return nil }
-    if device.format == .au {
-      guard let au = LiveSetScan.AuPlugin(device: device), let inventory = catalogs.inventory,
-            case .needsConversion = inventory.load(au) else { return nil }
-    }
     return target
   }
 
