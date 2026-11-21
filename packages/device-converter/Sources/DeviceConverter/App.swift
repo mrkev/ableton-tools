@@ -39,6 +39,11 @@ enum DeviceConverterApp {
     if args.contains("--probe-vst3") {
       exitSkippingPluginTeardown(ProbeCli.run(arguments: args))
     }
+    // Headless check of a set page's plan (and its save).
+    if args.contains("--selftest-plan") {
+      Task { @MainActor in exitSkippingPluginTeardown(await SelfTest.runPlan(arguments: args)) }
+      RunLoop.main.run()
+    }
     // Headless check of library discovery and scanning.
     if let i = args.firstIndex(of: "--selftest-library"), i + 1 < args.count {
       exitSkippingPluginTeardown(SelfTest.runLibrary(path: args[i + 1]))
@@ -46,8 +51,20 @@ enum DeviceConverterApp {
 
     let model = AppModel()
     // `DeviceConverter <path>` opens a library, project folder or set on launch.
-    if let path = args.dropFirst().first(where: { !$0.hasPrefix("-") }) {
-      model.open(url: URL(fileURLWithPath: path))
+    // Arguments that follow an option are its value, not a path.
+    let valued: Set<String> = ["--select"]
+    let paths = args.indices.dropFirst().filter { !args[$0].hasPrefix("-") && !valued.contains(args[$0 - 1]) }
+    if let i = paths.first {
+      model.open(url: URL(fileURLWithPath: args[i]))
+    }
+    // For screenshots and debugging: --select overview|plugins|<set or project path>.
+    if let i = args.firstIndex(of: "--select"), i + 1 < args.count {
+      switch args[i + 1] {
+      case "overview": model.selection = [.overview]
+      case "plugins": model.selection = [.plugins]
+      case let path where path.hasSuffix(".als"): model.reveal(URL(fileURLWithPath: path))
+      case let path: model.selection = [.project(URL(fileURLWithPath: path))]
+      }
     }
     let application = NSApplication.shared
     // NSApplication.delegate is weak; the local binding keeps it alive because
@@ -63,6 +80,7 @@ enum DeviceConverterApp {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let model: AppModel
   var window: NSWindow!
+  private var settingsWindow: NSWindow?
 
   init(model: AppModel) {
     self.model = model
@@ -81,7 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     window.contentView = NSHostingView(rootView: root)
     window.makeKeyAndOrderFront(nil)
     buildMenu()
-    NSApp.activate(ignoringOtherApps: true)
+    if CommandLine.arguments.contains("--settings") { showSettings() }
+    // DC_BACKGROUND=1 leaves the frontmost app frontmost (for scripted screenshots).
+    if ProcessInfo.processInfo.environment["DC_BACKGROUND"] == nil { NSApp.activate(ignoringOtherApps: true) }
   }
 
   func applicationWillTerminate(_ notification: Notification) { exitSkippingPluginTeardown(0) }
@@ -98,6 +118,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @objc func openDocument() { model.presentOpenPanel() }
   @objc func saveDocument() { model.activeModel?.presentSavePanel() }
   @objc func rescanLibrary() { model.rescan() }
+  @objc func fixInBulk() {
+    let scope = model.batchScope
+    model.presentBatch(for: scope.sets, title: scope.title)
+  }
+  @objc func openInLive() { focusedURL.map(LiveApps.open) }
+  @objc func showInFinder() { focusedURL.map { NSWorkspace.shared.activateFileViewerSelecting([$0]) } }
+
+  /// The set, or else the project, on screen.
+  private var focusedURL: URL? {
+    if let url = model.focusedSetURL { return url }
+    if case .project(let url)? = model.focus { return url }
+    if case .set(let url)? = model.root { return url }
+    return nil
+  }
+
+  @objc func showSettings() {
+    if settingsWindow == nil {
+      let view = SettingsView().environmentObject(model).environmentObject(model.catalogs)
+      let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+      window.title = "Settings"
+      window.styleMask = [.titled, .closable]
+      window.isReleasedWhenClosed = false
+      window.center()
+      settingsWindow = window
+    }
+    settingsWindow?.makeKeyAndOrderFront(nil)
+  }
 
   private func buildMenu() {
     let mainMenu = NSMenu()
@@ -109,6 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "About Device Converter", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
       keyEquivalent: "")
     appMenu.addItem(.separator())
+    appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+    appMenu.addItem(.separator())
+    appMenu.addItem(withTitle: "Hide Device Converter", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     appMenu.addItem(
       withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     appItem.submenu = appMenu
@@ -119,14 +169,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let open = fileMenu.addItem(
       withTitle: "Open…", action: #selector(openDocument), keyEquivalent: "o")
     open.target = self
-    let save = fileMenu.addItem(
-      withTitle: "Save As…", action: #selector(saveDocument), keyEquivalent: "s")
-    save.target = self
+    fileMenu.addItem(.separator())
+    fileMenu.addItem(withTitle: "Fix and Save Copy…", action: #selector(saveDocument), keyEquivalent: "s")
+      .target = self
+    fileMenu.addItem(withTitle: "Fix Sets in Bulk…", action: #selector(fixInBulk), keyEquivalent: "")
+      .target = self
+    fileMenu.addItem(.separator())
+    fileMenu.addItem(withTitle: "Open in \(LiveApps.newestName)", action: #selector(openInLive), keyEquivalent: "l")
+      .target = self
+    let finder = fileMenu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "r")
+    finder.keyEquivalentModifierMask = [.command, .shift]
+    finder.target = self
     fileMenu.addItem(.separator())
     let rescan = fileMenu.addItem(
       withTitle: "Rescan", action: #selector(rescanLibrary), keyEquivalent: "r")
     rescan.target = self
     fileItem.submenu = fileMenu
+
+    // Text fields (the search field) need these to cut, copy and paste.
+    let editItem = NSMenuItem()
+    mainMenu.addItem(editItem)
+    let editMenu = NSMenu(title: "Edit")
+    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+    editMenu.addItem(.separator())
+    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editItem.submenu = editMenu
+
+    let windowItem = NSMenuItem()
+    mainMenu.addItem(windowItem)
+    let windowMenu = NSMenu(title: "Window")
+    windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+    windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+    windowItem.submenu = windowMenu
+    NSApp.windowsMenu = windowMenu
 
     NSApp.mainMenu = mainMenu
   }

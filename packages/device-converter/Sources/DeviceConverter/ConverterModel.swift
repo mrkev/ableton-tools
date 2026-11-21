@@ -15,7 +15,32 @@ enum SlotAction: Equatable, Codable {
   case substitute(Substitution, PluginTarget)
 }
 
-/// The state of one open Live Set: its DOM, devices and per-device choices.
+/// The devices of one plugin in a set, which get one choice together.
+struct PluginGroup: Identifiable {
+  let id: String
+  let name: String
+  let format: DeviceFormat
+  var devices: [Device]
+
+  /// Track names, once each, in set order.
+  var tracks: [String] {
+    var seen = Set<String>()
+    return devices.map(\.trackName).filter { seen.insert($0).inserted }
+  }
+
+  /// Devices of the same plugin share a name, format and plugin id.
+  static func key(for device: Device) -> String {
+    let identity = device.uniqueId ?? device.vst3Uid.map { $0.map(String.init).joined(separator: ",") }
+      ?? [device.auType, device.auSubType, device.auManufacturer].compactMap { $0 }.joined(separator: "/")
+    return "\(device.format.rawValue):\(device.product.lowercased()):\(identity)"
+  }
+}
+
+/// The state of one open Live Set: its DOM, its plugins, and what fixing it does.
+///
+/// Each plugin device has a recommended action (what it needs to load in a native
+/// Live, with the replacements turned on in Settings); the user can override it
+/// per plugin. Overrides are all that `actions` holds.
 @MainActor
 final class ConverterModel: ObservableObject {
   let url: URL
@@ -26,9 +51,13 @@ final class ConverterModel: ObservableObject {
   @Published private(set) var document: AlsDocument?
   @Published private(set) var loadError: String?
   @Published private(set) var devices: [Device] = []
-  /// Per-device slot decision, keyed by device id.
-  @Published var actions: [UUID: SlotAction] = [:]
-  @Published var status: String = "Opening…"
+  /// Plugin devices grouped by plugin, in set order.
+  @Published private(set) var groups: [PluginGroup] = []
+  /// Per-device overrides of the recommended action, keyed by device id.
+  @Published private(set) var actions: [UUID: SlotAction] = [:]
+  @Published private(set) var isSaving = false
+  /// The last save's outcome, in a line.
+  @Published private(set) var status: String?
   /// Per-device conversion warnings and failures from the last save.
   @Published private(set) var report: [String] = []
   /// The DOM holds replacements that haven't reached a file (a write failed).
@@ -38,8 +67,9 @@ final class ConverterModel: ObservableObject {
   private(set) var loadedModified: Date?
 
   var fileName: String { url.lastPathComponent }
-  var hasChanges: Bool { hasUnsavedEdits || actions.values.contains { $0 != .keep } }
-  var convertibleCount: Int { devices.filter(\.isConvertible).count }
+  /// The user changed what fixing does.
+  var hasChanges: Bool { hasUnsavedEdits || !actions.isEmpty }
+  var predatesVst3: Bool { document?.predatesVst3 == true }
 
   init(url: URL, catalogs: PluginCatalogs) {
     self.url = url
@@ -64,16 +94,28 @@ final class ConverterModel: ObservableObject {
     switch loaded {
     case .success(let (doc, found)):
       document = doc
-      devices = found
-      actions = Dictionary(uniqueKeysWithValues: found.map { ($0.id, .keep) })
+      adopt(found)
       loadedModified = Self.modified(url)
-      status = "\(found.count) devices · \(convertibleCount) convertible"
-        + (doc.predatesVst3 && found.contains { $0.format == .vst }
-          ? " · saved by \(doc.creator): re-save in Live 10+ to convert to VST3" : "")
     case .failure(let error):
       loadError = String(describing: error)
-      status = "Couldn't open \(fileName)"
     }
+  }
+
+  private func adopt(_ found: [Device]) {
+    devices = found
+    actions = [:]
+    var byKey: [String: Int] = [:]
+    var out: [PluginGroup] = []
+    for device in found where device.format != .native && device.format != .m4l {
+      let key = PluginGroup.key(for: device)
+      if let i = byKey[key] {
+        out[i].devices.append(device)
+      } else {
+        byKey[key] = out.count
+        out.append(PluginGroup(id: key, name: device.product, format: device.format, devices: [device]))
+      }
+    }
+    groups = out
   }
 
   var isStaleOnDisk: Bool {
@@ -85,18 +127,62 @@ final class ConverterModel: ObservableObject {
     try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
   }
 
-  // MARK: Slots
+  /// Live's own devices and Max for Live devices, which always load.
+  var builtInCount: Int { devices.filter { ($0.format == .native && !$0.isRack) || $0.format == .m4l }.count }
 
-  func action(for device: Device) -> SlotAction { actions[device.id] ?? .keep }
+  // MARK: What each plugin does
 
-  func setAction(_ action: SlotAction, for device: Device) {
-    actions[device.id] = action
+  /// How a device loads in a native Live, with the default replacements.
+  func load(of device: Device) -> PluginLoad? { catalogs.effectiveInventory?.load(device) }
+
+  /// What fixing does to a device unless the user says otherwise: only what it
+  /// needs to load.
+  func recommendedAction(for device: Device) -> SlotAction {
+    switch load(of: device) {
+    case .needsConversion(let target)?:
+      return predatesVst3 ? .keep : .replaceVST3(target)
+    case .substitute(let sub, let target)?:
+      return predatesVst3 && !sub.worksBefore10(target) ? .keep : .substitute(sub, target)
+    default:
+      return .keep
+    }
   }
+
+  func action(for device: Device) -> SlotAction { actions[device.id] ?? recommendedAction(for: device) }
+
+  func action(for group: PluginGroup) -> SlotAction { group.devices.first.map(action(for:)) ?? .keep }
+
+  func setAction(_ action: SlotAction, for group: PluginGroup) {
+    for device in group.devices {
+      if action == recommendedAction(for: device) { actions[device.id] = nil } else { actions[device.id] = action }
+    }
+  }
+
+  func resetChoices() { actions = [:] }
+
+  /// Will this plugin load once the set is fixed?
+  func willLoad(_ group: PluginGroup) -> Bool {
+    guard let device = group.devices.first else { return true }
+    switch action(for: device) {
+    case .keep:
+      if case .stuck? = load(of: device) { return false }
+      if case .needsConversion? = load(of: device) { return false }
+      if case .substitute? = load(of: device) { return false }
+      return true
+    case .replaceAU(let au): return au.isNative
+    case .replaceVST3, .substitute: return true
+    }
+  }
+
+  /// Groups fixing changes.
+  var changingGroups: [PluginGroup] { groups.filter { action(for: $0) != .keep } }
+  /// Groups that won't load after fixing.
+  var brokenGroups: [PluginGroup] { groups.filter { !willLoad($0) } }
 
   /// `nil` for anything that isn't a VST2 device or an AU with a VST3 replacing it.
   func vst3Availability(of device: Device) -> Vst3Availability? {
     if device.format == .vst {
-      if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
+      if predatesVst3 { return .unavailable("re-save in Live 10+ first") }
       if catalogs.isLoadingVst3 { return .unavailable("scanning VST3s…") }
     }
     // Only an AU that can't load natively (Massive's AU is native; OTT's isn't).
@@ -105,28 +191,13 @@ final class ConverterModel: ObservableObject {
             case .needsConversion = inventory.load(au) else { return nil }
     }
     guard let availability = Vst3Availability.resolve(device, catalog: catalogs.vst3) else { return nil }
-    if document?.predatesVst3 == true { return .unavailable("re-save in Live 10+ first") }
+    if predatesVst3 { return .unavailable("re-save in Live 10+ first") }
     return availability
-  }
-
-  /// Has a replacement to offer: shown in the "Only convertible" list.
-  func isConvertible(_ device: Device) -> Bool {
-    device.isConvertible || vst3Availability(of: device) != nil
-  }
-
-  /// "Convert to VST3" takes every VST2 with a VST3, and the AUs that need theirs.
-  private func convertsToVst3(_ device: Device) -> Vst3PluginInfo? {
-    guard case .available(let target)? = vst3Availability(of: device) else { return nil }
-    return target
   }
 
   /// A VST2 device whose own build is native, so it loads without converting.
   func loadsNativelyAsVst2(_ device: Device) -> Bool {
-    guard device.format == .vst, let inventory = catalogs.inventory else { return false }
-    let info = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")
-    return inventory.isNative(LiveSetScan.Vst2Plugin(
-      name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device),
-      isChunk: Vst2State.isChunkPreset(device.element), fileName: info?.childValue("FileName")))
+    device.format == .vst && load(of: device) == .native
   }
 
   /// The installed AU whose name best matches this device (for auto-suggest).
@@ -135,62 +206,48 @@ final class ConverterModel: ObservableObject {
     let want = device.product.lowercased()
     guard !want.isEmpty else { return nil }
     // Prefer an exact name match; fall back to contains.
-    if let exact = catalogs.audioUnits.first(where: { $0.name.lowercased() == want }) {
+    if let exact = catalogs.audioUnits.first(where: { $0.name.lowercased() == want && $0.isNative }) {
       return exact
     }
     return catalogs.audioUnits.first {
-      $0.name.lowercased().contains(want) || want.contains($0.name.lowercased())
+      $0.isNative && ($0.name.lowercased().contains(want) || want.contains($0.name.lowercased()))
     }
-  }
-
-  /// Queue every VST2 device with a usable VST3 for conversion. Audio Units are
-  /// left to explicit per-device choices, since they lose the plugin's settings.
-  func convertAllToVst3() {
-    var queued = 0
-    var unavailable: [String] = []
-    var substituted = 0
-    for d in devices {
-      if let target = convertsToVst3(d) {
-        setAction(.replaceVST3(target), for: d)
-        queued += 1
-      } else if let (sub, target) = catalogs.substitution(for: d), catalogs.substitutions.contains(sub),
-                document?.predatesVst3 == false || sub.worksBefore10(target) {
-        setAction(.substitute(sub, target), for: d)
-        substituted += 1
-      } else if d.format == .vst {
-        unavailable.append(d.name)
-      }
-    }
-    status = "\(queued) device(s) will convert to VST3 on save"
-      + (substituted > 0 ? " · \(substituted) replaced by a different plugin" : "")
-      + (unavailable.isEmpty ? "" : " · \(unavailable.count) can't: "
-        + Set(unavailable).sorted().joined(separator: ", "))
   }
 
   // MARK: Save
 
   private var alsType: UTType { UTType(filenameExtension: "als") ?? .data }
 
+  var canFix: Bool { document != nil && !catalogs.isHostingPlugins && (!changingGroups.isEmpty || hasUnsavedEdits) }
+
+  /// Saves the fixed set as a new file beside the original, which stays as it is.
   func presentSavePanel() {
-    guard document != nil, !catalogs.isHostingPlugins, hasChanges else { return }
+    guard canFix else { return }
     let panel = NSSavePanel()
     panel.allowedContentTypes = [alsType]
     let base = url.deletingPathExtension().lastPathComponent
-    // The library recognizes `-vst3` files as conversions of their original.
-    let onlyVst3 = actions.values.allSatisfy {
-      if case .replaceAU = $0 { return false }
-      return true
+    // The library recognizes these names as copies of their original.
+    let toAU = devices.contains {
+      if case .replaceAU = action(for: $0) { return true }
+      return false
     }
-    panel.nameFieldStringValue = base + (onlyVst3 ? LibraryDiscovery.convertedSuffix : "-converted") + ".als"
+    panel.nameFieldStringValue = base + (toAU ? "-converted" : LibraryDiscovery.convertedSuffix) + ".als"
     panel.directoryURL = url.deletingLastPathComponent()
+    panel.message = "The fixed copy is saved as a new set. “\(fileName)” stays as it is."
     if panel.runModal() == .OK, let url = panel.url { save(to: url) }
   }
 
   func save(to destination: URL) {
     guard document != nil, !catalogs.isHostingPlugins else { return }
+    guard destination.standardizedFileURL != url.standardizedFileURL else {
+      status = "Not saved: choose a new name, so the original stays as it is."
+      return
+    }
     catalogs.isHostingPlugins = true
+    isSaving = true
     Task {
       await performSave(to: destination)
+      isSaving = false
       catalogs.isHostingPlugins = false
       onSaved?()
     }
@@ -213,7 +270,7 @@ final class ConverterModel: ObservableObject {
         replacement = DeviceBuilder.makeAUDevice(from: device, target: au)
         toAU += 1
       case .replaceVST3(let target):
-        status = "Converting \(i + 1)/\(pending.count): \(device.name)…"
+        status = "Converting \(i + 1) of \(pending.count): \(device.name)…"
         await Task.yield()
         do {
           let c = try Vst3Migration.prepare(device, target: target, automatedTargets: automated)
@@ -227,7 +284,7 @@ final class ConverterModel: ObservableObject {
           continue
         }
       case .substitute(let sub, let target):
-        status = "Replacing \(i + 1)/\(pending.count): \(device.name)…"
+        status = "Replacing \(i + 1) of \(pending.count): \(device.name)…"
         await Task.yield()
         do {
           let c = try await sub.convert(device, target: target, document: document, automatedTargets: automated)
@@ -265,8 +322,6 @@ final class ConverterModel: ObservableObject {
 
     // Replaced elements are detached from the DOM, so always re-sync: acting on
     // the old devices again would replace the wrong children.
-    let found = DeviceExtractor.extractAll(document.root)
-    devices = found
-    actions = Dictionary(uniqueKeysWithValues: found.map { ($0.id, .keep) })
+    adopt(DeviceExtractor.extractAll(document.root))
   }
 }

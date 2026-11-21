@@ -3,9 +3,22 @@ import Foundation
 /// One Live Set in a project folder.
 struct LiveSetEntry: Identifiable, Hashable, Codable {
   let url: URL
-  /// `<name>-vst3.als`, when it exists and is at least as new as this set.
-  let convertedURL: URL?
+  /// A fixed copy saved beside it (`<name>-vst3.als`, or `-converted.als`).
+  var copyURL: URL?
+  /// The copy is at least as new as this set, so it still reflects it.
+  var copyIsCurrent = false
+  /// When the set was last saved.
+  var modified: Date?
 
+  init(url: URL, copyURL: URL? = nil, copyIsCurrent: Bool = false, modified: Date? = nil) {
+    self.url = url
+    self.copyURL = copyURL
+    self.copyIsCurrent = copyIsCurrent
+    self.modified = modified
+  }
+
+  /// The copy, when it's current.
+  var convertedURL: URL? { copyIsCurrent ? copyURL : nil }
   var id: URL { url }
   var name: String { url.deletingPathExtension().lastPathComponent }
 }
@@ -38,6 +51,9 @@ enum OpenedRoot: Equatable {
 
 enum LibraryDiscovery {
   static let convertedSuffix = "-vst3"
+  /// Names a fixed copy can have, preferred first. `-converted` is what Save As
+  /// suggests when a device became an AU.
+  static let copySuffixes = [convertedSuffix, "-converted"]
   private static let projectMarker = "Ableton Project Info"
 
   /// A single set, a project folder, or a folder of project folders.
@@ -68,12 +84,15 @@ enum LibraryDiscovery {
     let names = Set(files.map { $0.deletingPathExtension().lastPathComponent })
     let sets = files.compactMap { file -> LiveSetEntry? in
       let name = file.deletingPathExtension().lastPathComponent
-      // A conversion belongs to its original, not the list of work to do.
-      if name.hasSuffix(convertedSuffix), names.contains(String(name.dropLast(convertedSuffix.count))) {
+      // A copy belongs to its original, not the list of sets.
+      if copySuffixes.contains(where: { name.hasSuffix($0) && names.contains(String(name.dropLast($0.count))) }) {
         return nil
       }
-      let converted = url.appendingPathComponent(name + convertedSuffix + ".als")
-      return LiveSetEntry(url: file, convertedURL: isCurrent(converted, for: file) ? converted : nil)
+      let copy = copySuffixes.lazy.map { url.appendingPathComponent(name + $0 + ".als") }
+        .first { FileManager.default.fileExists(atPath: $0.path) }
+      return LiveSetEntry(
+        url: file, copyURL: copy, copyIsCurrent: copy.map { isCurrent($0, for: file) } ?? false,
+        modified: modified(file))
     }
     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     return sets.isEmpty ? nil : ProjectEntry(url: url, sets: sets)

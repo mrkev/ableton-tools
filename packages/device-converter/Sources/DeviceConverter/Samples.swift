@@ -209,6 +209,9 @@ enum LiveApps {
     installed().max { $0.version.localizedStandardCompare($1.version) == .orderedAscending }
   }
 
+  /// "Live 11", for buttons. Looked up once.
+  @MainActor static let newestName = newest()?.name ?? "Live"
+
   static func open(_ set: URL) {
     guard let live = newest() else {
       NSWorkspace.shared.open(set)

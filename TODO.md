@@ -58,6 +58,16 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
 - [x] **VST2 → VST3 in the GUI** — a "Convert to VST3" slot action next to the
       AU one.
 - [x] **Project library** — open a folder of projects, see each set's status.
+- [x] **Project management UI** — per-set page (plugins grouped, recommended fix,
+      Fix and Save Copy), Plugins view, sets table with tempo/length/tracks, fixed
+      copies under their sets, search, Settings, bulk fix moved to a menu.
+- [x] **Missing samples** — resolved the way Live looks for them, lost vs. relinkable.
+- [ ] **Check the missing-sample verdicts in Live**: open a set the app says has lost
+      samples (wobble: 7 lost, 130 relinkable) and compare with Live's File Manager.
+      Does Live relink moved Core Library samples (Live 9 → 11 layout) by itself?
+- [ ] **Relink samples** — for samples with a namesake, write the found path into a
+      fixed copy (needs size/CRC checks against `SearchHint` to pick the right file).
+- [ ] **Rename the app** now that it manages projects, not only devices.
 - [x] **Native status** — whether each set opens in a native Live, across VST2, VST3
       and AU.
 - [x] **VST2 → VST3: batch conversion** from the library or `--batch`.

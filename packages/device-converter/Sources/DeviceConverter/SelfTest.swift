@@ -94,6 +94,43 @@ enum SelfTest {
     return mismatches == 0 ? 0 : 1
   }
 
+  /// The plan a set page shows, and optionally the fixed copy it saves:
+  /// `--selftest-plan <set.als> [--replace] [--out <copy.als>]`. `--replace` picks
+  /// every available replacement, as the page's menus would.
+  @MainActor static func runPlan(arguments args: [String]) async -> Int32 {
+    guard let i = args.firstIndex(of: "--selftest-plan"), i + 1 < args.count else { return 2 }
+    let catalogs = PluginCatalogs()
+    while catalogs.isLoading { try? await Task.sleep(for: .milliseconds(100)) }
+    let model = ConverterModel(url: URL(fileURLWithPath: args[i + 1]), catalogs: catalogs)
+    await model.loadIfNeeded()
+    if let error = model.loadError {
+      print("couldn't open: \(error)")
+      return 1
+    }
+    print("defaults: replace \(catalogs.substitutions.map(\.sourceName).sorted())")
+    if args.contains("--replace") {
+      for group in model.groups {
+        if let (sub, target) = catalogs.substitution(for: group.devices[0]) {
+          model.setAction(.substitute(sub, target), for: group)
+        }
+      }
+    }
+    for group in model.groups {
+      let load = model.load(of: group.devices[0]).map { "\($0)" } ?? "-"
+      let action = model.action(for: group)
+      print("  \(model.willLoad(group) ? "✓" : "✗") \(group.format.rawValue) \(group.name) ×\(group.devices.count): "
+        + "\(load.prefix(60)) → \(String(describing: action).prefix(80))")
+    }
+    print("changing \(model.changingGroups.count), broken \(model.brokenGroups.map(\.name)), canFix \(model.canFix)")
+    guard let o = args.firstIndex(of: "--out"), o + 1 < args.count else { return 0 }
+    model.save(to: URL(fileURLWithPath: args[o + 1]))
+    while model.isSaving { try? await Task.sleep(for: .milliseconds(100)) }
+    print(model.status ?? "no status")
+    model.report.forEach { print("  \($0)") }
+    print("after save: changing \(model.changingGroups.count), broken \(model.brokenGroups.map(\.name))")
+    return 0
+  }
+
   static func run(path: String) {
     do {
       let url = URL(fileURLWithPath: path)

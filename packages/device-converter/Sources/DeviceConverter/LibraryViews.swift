@@ -17,20 +17,39 @@ struct RootView: View {
           LibrarySidebar()
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 440)
         } detail: {
-          if let batch = app.batch {
-            BatchProgressView(run: batch)
-          } else {
-            switch app.selection {
-            case .set(let url):
-              SetDetailView(url: url)
-            case let item:
-              LibrarySummaryView(item: item)
-            }
-          }
+          detail
         }
       }
     }
     .frame(minWidth: 920, minHeight: 520)
+    .sheet(item: $app.batchRequest) { request in
+      BatchSheet(title: request.title, candidates: request.candidates,
+                 replacing: Substitution.allCases.filter(app.catalogs.substitutions.contains)) { chosen, destination in
+        app.batchRequest = nil
+        app.startBatch(sets: chosen, destination: destination)
+      } onCancel: {
+        app.batchRequest = nil
+      }
+    }
+  }
+
+  @ViewBuilder private var detail: some View {
+    if let batch = app.batch {
+      BatchProgressView(run: batch)
+    } else if app.selection.count > 1 {
+      SelectionPage()
+    } else {
+      switch app.focus {
+      case .set(let url)?:
+        SetDetailView(url: url)
+      case .plugins?:
+        PluginsPage()
+      case .project(let url)?:
+        SetsPage(project: url)
+      case .overview?, nil:
+        SetsPage(project: nil)
+      }
+    }
   }
 }
 
@@ -39,23 +58,23 @@ private struct WelcomeView: View {
 
   var body: some View {
     ContentUnavailableView {
-      Label("Ableton Device Converter", systemImage: "slider.horizontal.2.square.on.square")
+      Label("Ableton Projects", systemImage: "slider.horizontal.2.square.on.square")
     } description: {
-      Text(app.openError ?? "Open a folder of projects, a project folder, or a single Live Set.")
+      Text(app.openError ?? "Open your Projects folder, one project, or a single Live Set.")
     } actions: {
       Button("Open…") { app.presentOpenPanel() }
     }
   }
 }
 
-/// One set's device view, with its own state object.
+/// One set's page, with its own state object.
 private struct SetDetailView: View {
   @EnvironmentObject var app: AppModel
   let url: URL
 
   var body: some View {
     let model = app.model(for: url)
-    ContentView()
+    SetPageView()
       .environmentObject(model)
       .id(ObjectIdentifier(model))
   }
@@ -67,7 +86,6 @@ private struct LibrarySidebar: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
   @State private var onlyNeedsWork = false
-  @State private var expanded: Set<URL> = []
 
   private var isSingleProject: Bool {
     if case .project = app.root { return true }
@@ -75,19 +93,25 @@ private struct LibrarySidebar: View {
   }
 
   private func visible(_ project: ProjectEntry) -> [LiveSetEntry] {
-    onlyNeedsWork ? project.sets.filter { app.status(of: $0).kind.needsWork } : project.sets
+    project.sets.filter {
+      (!onlyNeedsWork || app.status(of: $0).kind.needsWork) && app.matchesSearch($0, in: project)
+    }
   }
 
   var body: some View {
     VStack(spacing: 0) {
+      ScrollViewReader { proxy in
       List(selection: $app.selection) {
-        Label(isSingleProject ? "All sets" : "All projects", systemImage: "square.stack.3d.up")
+        Label(isSingleProject ? "All Sets" : "All Projects", systemImage: "square.stack.3d.up")
           .tag(SidebarItem.overview)
+        Label("Plugins", systemImage: "puzzlepiece.extension")
+          .badge(app.plugins.filter { $0.verdict.rank < 2 }.count)
+          .tag(SidebarItem.plugins)
 
-        Section {
+        Section(isSingleProject ? "Sets" : "Projects") {
           if isSingleProject {
             ForEach(app.projects.flatMap(visible)) { set in
-              SetRow(set: set, title: set.name)
+              setRows(set, title: set.name)
             }
           } else {
             ForEach(app.projects) { project in
@@ -97,6 +121,16 @@ private struct LibrarySidebar: View {
         }
       }
       .listStyle(.sidebar)
+      .searchable(text: $app.searchText, placement: .sidebar, prompt: "Sets, projects, plugins")
+      // A set picked elsewhere (a table, the Plugins page) scrolls into view.
+      .onChange(of: app.focusedSetURL) { _, url in
+        guard let url else { return }
+        Task { @MainActor in withAnimation { proxy.scrollTo(SidebarItem.set(url)) } }
+      }
+      .onAppear {
+        if let url = app.focusedSetURL { DispatchQueue.main.async { proxy.scrollTo(SidebarItem.set(url), anchor: .center) } }
+      }
+      }
       // Rebuild rather than diff when the filter flips: changing the rows in
       // place triggers AppKit's NSTableView reentrancy warning.
       .id(onlyNeedsWork)
@@ -107,16 +141,23 @@ private struct LibrarySidebar: View {
     .disabled(catalogs.isHostingPlugins)
   }
 
+  /// A set, and its fixed copy beneath it.
+  @ViewBuilder private func setRows(_ set: LiveSetEntry, title: String, subtitle: String? = nil) -> some View {
+    SetRow(set: set, title: title, subtitle: subtitle)
+    if let copy = set.copyURL {
+      CopyRow(set: set, url: copy)
+    }
+  }
+
   @ViewBuilder private func projectRow(_ project: ProjectEntry) -> some View {
     let sets = visible(project)
     if sets.count == 1 && project.sets.count == 1 {
       // Nothing to expand: the project is its one set.
-      SetRow(set: sets[0], title: project.name,
-             subtitle: sets[0].name == project.name ? nil : sets[0].name)
+      setRows(sets[0], title: project.name, subtitle: sets[0].name == project.name ? nil : sets[0].name)
     } else if !sets.isEmpty {
       DisclosureGroup(isExpanded: isExpanded(project)) {
         ForEach(sets) { set in
-          SetRow(set: set, title: set.name)
+          setRows(set, title: set.name)
         }
       } label: {
         let kind = app.rollup(of: project)
@@ -124,9 +165,9 @@ private struct LibrarySidebar: View {
           StatusIcon(kind: kind)
           Text(project.name).lineLimit(1)
           Spacer(minLength: 4)
-          Text("\(project.sets.count) sets").font(.caption).foregroundStyle(.secondary)
+          Text("\(project.sets.count)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
-        .help("Most urgent: \(kind.title)")
+        .help("\(project.sets.count) sets · most urgent: \(kind.title)")
       }
       .tag(SidebarItem.project(project.url))
     }
@@ -134,9 +175,9 @@ private struct LibrarySidebar: View {
 
   private func isExpanded(_ project: ProjectEntry) -> Binding<Bool> {
     Binding {
-      expanded.contains(project.url)
+      app.isSearching || app.expandedProjects.contains(project.url)
     } set: { isOpen in
-      if isOpen { expanded.insert(project.url) } else { expanded.remove(project.url) }
+      if isOpen { app.expandedProjects.insert(project.url) } else { app.expandedProjects.remove(project.url) }
     }
   }
 
@@ -179,13 +220,41 @@ private struct SetRow: View {
       if let subtitle {
         Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
       }
+      if app.lostSamples(of: set.url) > 0 {
+        Spacer(minLength: 4)
+        Image(systemName: "waveform.badge.exclamationmark").foregroundStyle(.orange)
+          .help("\(plural(app.lostSamples(of: set.url), "sample")) can't be found")
+          .accessibilityLabel("Missing samples")
+      }
     }
     .help(status.detail)
     .tag(SidebarItem.set(set.url))
+    .id(SidebarItem.set(set.url))
   }
 }
 
-private struct StatusIcon: View {
+/// A fixed copy, under the set it was made from.
+private struct CopyRow: View {
+  @EnvironmentObject var app: AppModel
+  let set: LiveSetEntry
+  let url: URL
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: set.copyIsCurrent ? "doc.on.doc" : "clock.badge.exclamationmark")
+        .foregroundStyle(set.copyIsCurrent ? Color.secondary : .orange)
+        .frame(width: 16)
+      Text(set.copyIsCurrent ? "Fixed copy" : "Fixed copy (out of date)")
+        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+    }
+    .padding(.leading, 18)
+    .help(url.lastPathComponent)
+    .tag(SidebarItem.set(url))
+    .id(SidebarItem.set(url))
+  }
+}
+
+struct StatusIcon: View {
   let kind: SetStatus.Kind
 
   var body: some View {
@@ -197,139 +266,13 @@ private struct StatusIcon: View {
 }
 
 extension SetStatus.Kind {
-  fileprivate var tint: Color {
+  var tint: Color {
     switch self {
-    case .afterConverting, .converted, .opens: return .green
+    case .afterConverting: return .blue
+    case .converted, .opens: return .green
     case .resaveFirst: return .orange
     case .stuck, .failed: return .red
     case .scanning: return .secondary
-    }
-  }
-}
-
-// MARK: - Summary
-
-/// Status counts and blocking plugins for the whole library or one project.
-private struct LibrarySummaryView: View {
-  @EnvironmentObject var app: AppModel
-  @EnvironmentObject var catalogs: PluginCatalogs
-  let item: SidebarItem?
-  @State private var showingBatchSheet = false
-
-  private var title: String {
-    if case .project(let url) = item, let project = app.projects.first(where: { $0.url == url }) {
-      return project.name
-    }
-    if case .project = app.root, let only = app.projects.first { return only.name }
-    return app.root?.url.lastPathComponent ?? ""
-  }
-
-  var body: some View {
-    let sets = app.sets(in: item)
-    let counts = app.counts(in: sets)
-    let blocking = app.blockingPlugins(in: sets)
-
-    ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title).font(.title2.weight(.semibold))
-          Text(sets.count == 1 ? "1 set" : "\(sets.count) sets").foregroundStyle(.secondary)
-        }
-
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
-          ForEach(SetStatus.Kind.allCases.filter { counts[$0] != nil }, id: \.self) { kind in
-            GridRow {
-              StatusIcon(kind: kind)
-              Text("\(counts[kind] ?? 0)").monospacedDigit().gridColumnAlignment(.trailing)
-              VStack(alignment: .leading, spacing: 1) {
-                Text(kind.title)
-                Text(kind.explanation).font(.caption).foregroundStyle(.secondary)
-              }
-            }
-          }
-        }
-
-        let candidates = app.batchCandidates(in: sets)
-        if !candidates.isEmpty {
-          Button("Convert Sets…") { showingBatchSheet = true }
-            .disabled(app.isScanning || catalogs.isLoading)
-            .sheet(isPresented: $showingBatchSheet) {
-              BatchSheet(candidates: candidates, replacing: Substitution.allCases.filter(catalogs.substitutions.contains)) { chosen, destination in
-                showingBatchSheet = false
-                app.startBatch(sets: chosen, destination: destination)
-              } onCancel: {
-                showingBatchSheet = false
-              }
-            }
-        }
-
-        let usages = Substitution.allCases.map { ($0, app.usage(of: $0, in: sets)) }.filter { $0.1.sets > 0 }
-        if !usages.isEmpty {
-          VStack(alignment: .leading, spacing: 14) {
-            Text("Replacements").font(.headline)
-            ForEach(usages, id: \.0) { sub, usage in
-              ReplacementOption(substitution: sub, sets: usage.sets, devices: usage.instances)
-            }
-          }
-        }
-
-        if !blocking.isEmpty {
-          VStack(alignment: .leading, spacing: 10) {
-            Text("Plugins holding sets back").font(.headline)
-            Text("These have no native build that Live can use. A native update of the top ones frees the most sets.")
-              .font(.caption).foregroundStyle(.secondary)
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
-              GridRow {
-                Text("Plugin")
-                Text("Sets").gridColumnAlignment(.trailing)
-                Text("Instances").gridColumnAlignment(.trailing)
-                Text("Why")
-              }
-              .font(.caption).foregroundStyle(.secondary)
-              Divider()
-              ForEach(blocking) { plugin in
-                GridRow {
-                  Text(plugin.name)
-                  Text("\(plugin.sets)").monospacedDigit()
-                  Text("\(plugin.instances)").monospacedDigit().foregroundStyle(.secondary)
-                  Text(plugin.reason).foregroundStyle(.secondary)
-                }
-              }
-            }
-          }
-        }
-      }
-      .padding(24)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-}
-
-/// The opt-in for one substitution.
-private struct ReplacementOption: View {
-  @EnvironmentObject var catalogs: PluginCatalogs
-  let substitution: Substitution
-  let sets: Int
-  let devices: Int
-
-  private var isInstalled: Bool {
-    substitution.isInstalled(vst3: catalogs.vst3, audioUnits: catalogs.audioUnits)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Toggle("Replace \(substitution.sourceName) with \(substitution.targetName)",
-             isOn: catalogs.isOptedIn(substitution))
-        .toggleStyle(.checkbox)
-        .disabled(catalogs.isLoading || !isInstalled || catalogs.isHostingPlugins)
-      Text("\(substitution.sourceName) is in \(sets) \(sets == 1 ? "set" : "sets") "
-        + "(\(devices) \(devices == 1 ? "device" : "devices")). " + substitution.explanation)
-        .font(.caption).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: 560, alignment: .leading)
-      if !catalogs.isLoading && !isInstalled {
-        Text("Install \(substitution.targetName) to use this.").font(.caption).foregroundStyle(.orange)
-      }
     }
   }
 }
@@ -338,6 +281,7 @@ private struct ReplacementOption: View {
 
 /// Chooses what a batch converts and where it writes.
 private struct BatchSheet: View {
+  let title: String
   let candidates: BatchCandidates
   /// Opted-in substitutions the batch will make.
   let replacing: [Substitution]
@@ -361,13 +305,15 @@ private struct BatchSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Convert \(chosen.count) \(chosen.count == 1 ? "set" : "sets") to VST3")
-        .font(.headline)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Fix \(plural(chosen.count, "set"))").font(.headline)
+        Text(title).font(.caption).foregroundStyle(.secondary)
+      }
 
       VStack(alignment: .leading, spacing: 4) {
         Text(candidates.required.isEmpty
-          ? "No sets need converting to open."
-          : "\(candidates.required.count) need converting to open")
+          ? "No sets here need fixing to open."
+          : "\(candidates.required.count) need fixing to open")
         if !candidates.partial.isEmpty {
           Toggle("Also \(candidates.partial.count) stuck on other plugins", isOn: $includePartial)
             .toggleStyle(.checkbox)
@@ -418,7 +364,7 @@ private struct BatchSheet: View {
       HStack {
         Spacer()
         Button("Cancel") { onCancel() }.keyboardShortcut(.cancelAction)
-        Button("Convert") {
+        Button("Fix") {
           if let destination { onStart(chosen, destination) }
         }
         .keyboardShortcut(.defaultAction)

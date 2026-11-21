@@ -159,6 +159,24 @@ struct PluginInventory {
     return .stuck(reason: matches.isEmpty ? "AU not installed" : "AU is Intel only")
   }
 
+  /// How a device in an open set loads; `nil` for Live's own devices.
+  func load(_ device: Device) -> PluginLoad? {
+    switch device.format {
+    case .vst:
+      let type = Vst2State.presetType(device.element)
+      let info = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")
+      return load(LiveSetScan.Vst2Plugin(
+        name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device), isChunk: type == "FBCh",
+        isParameterDump: type == "FxBk", fileName: info?.childValue("FileName")))
+    case .vst3:
+      return load(LiveSetScan.Vst3Plugin(name: device.product, uid: device.vst3Uid ?? []))
+    case .au:
+      return LiveSetScan.AuPlugin(device: device).map { load($0) }
+    case .native, .m4l:
+      return nil
+    }
+  }
+
   // MARK: Whole sets
 
   /// Every plugin device in the set, with how it loads.

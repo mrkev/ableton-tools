@@ -11,31 +11,62 @@ references a plugin your Live can't load will open again:
   at its default settings).
 
 Open a folder of projects, a project folder or a single `.als`: File › Open works
-out which from what you pick. Folders get a sidebar of projects and sets, each saying
-whether it will open in a native (Apple Silicon) Live:
+out which from what you pick.
 
-- **Opens natively** — every plugin, in any format, has an arm64 build.
-- **Opens after converting** — needs Intel-only VST2 devices replaced by native VST3s.
-- **Re-save, then convert** — the same, but saved by Live 9. (A Live 9 set that needs
+### The library
+
+The sidebar lists projects and their sets, each with whether it will open in a
+native (Apple Silicon) Live:
+
+- **Opens natively**: every plugin, in any format, has an arm64 build.
+- **Opens after converting**: needs Intel-only devices replaced by native VST3s,
+  or by a replacement turned on in Settings.
+- **Re-save, then convert**: the same, but saved by Live 9. (A Live 9 set that needs
   no conversion just opens; Live upgrades it.)
-- **Stuck on plugins** — uses a plugin with no native build Live can use. The summary
-  ranks these plugins by how many sets each holds back.
-- **Converted** — a current `<name>-vst3.als` beside the set opens natively.
+- **Stuck on plugins**: uses a plugin with no native build Live can use.
+- **Converted**: a current fixed copy beside the set opens natively.
 
-Statuses come from a fast byte scan of each set, cached by file date and size; File ›
-Rescan picks up changes.
+A fixed copy (`<name>-vst3.als`, or `<name>-converted.als`) shows under its set rather
+than as a set of its own, marked out of date when the set was saved after it. An
+orange waveform marks sets with samples that can't be found. The search field
+filters by set, project or plugin name.
 
-A set opens in two columns:
+**All Projects** (or a project) shows status counts, what's holding sets back, and a
+table of sets with their Live version, tempo, arrangement length, track count,
+missing samples and save date; double-click a row to open its page. **Plugins**
+lists every plugin in the library with what it needs (works natively, converts to
+its VST3, can be replaced, or won't load), how many sets use it, and in its inspector
+which sets those are.
 
-- **Left** — the VST2/VST3 devices in the file, with their tracks. Untick "Only
-  convertible" to see every device (tracks + racks, as a tree).
-- **Right** — a "slot" per VST2/VST3 device. By default each slot keeps the
-  original; "Change" replaces it with its VST3 or an installed Audio Unit.
-  "Convert VST2 to VST3" queues every VST2 device that has a usable VST3.
+Statuses come from a fast byte scan of each set, cached by file date and size;
+File › Rescan picks up changes.
 
-Then **Save As…** writes a *new* `.als` (never touches the original) with only
-the chosen devices replaced — everything else keeps its values, though unchanged
-XML isn't guaranteed byte-identical (empty-element spacing, for example).
+### A set's page
+
+- **Verdict**: whether it opens in the newest installed Live, and why not.
+- **Plugins**: one row per plugin, with the tracks using it and what fixing does to
+  it. The recommendation is only what it needs to load: an Intel-only VST2 or AU
+  becomes its VST3, and a plugin with a replacement turned on in Settings is
+  replaced. The ⋯ menu overrides that for this set: leave it, move a native VST2 to
+  its VST3, use a replacement that's off by default, or pick an Audio Unit (which
+  starts from its default settings).
+- **Fix and Save Copy…** saves the fixed set as a new file beside the original,
+  which is never changed. Only the chosen devices are replaced; everything else
+  keeps its values, though unchanged XML isn't guaranteed byte-identical.
+- **Samples**: files the set refers to that aren't where it expects. They're looked
+  for where Live would: the recorded path, relative to the project, and Live's Core
+  Library, packs and User Library (from Live's `Library.cfg`), including library
+  paths written by older Live versions. Older sets keep the absolute path in a Mac
+  alias record, which is decoded. Each missing file is either lost or has a file of
+  the same name somewhere in the libraries or Places, which Live's File Manager can
+  likely relink. Missing freeze files are listed apart.
+
+Open in Live and Show in Finder are in the toolbar and the File menu. Settings
+holds the replacements' defaults.
+
+To fix many sets at once, use File › Fix Sets in Bulk… (for what's selected in the
+sidebar, the project shown, or the whole library), or select several sets in the
+sidebar or a table.
 
 ## VST2 → VST3 migration
 
@@ -92,7 +123,8 @@ shows which parameters moved.
 
 ## Batch conversion
 
-"Convert Sets…" in a library or project summary, or from the command line:
+File › Fix Sets in Bulk…, "Fix several at once…" on a library or project page, or
+from the command line:
 
 ```sh
 swift run DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals) \\
@@ -118,8 +150,8 @@ worker continues. Save As for a single set still hosts plugins in the app.
 
 Some Intel-only plugins have no native build, but a different plugin does the same
 job. Replacing them is opt-in, because the result doesn't sound identical: a
-checkbox per replacement under "Replacements" in a library summary, a flag on
-`--batch` and `--vst3`, or "Replace with …" on one device. Each lives in
+checkbox per replacement in Settings (or a plugin's inspector on the Plugins
+page), a flag on `--batch` and `--vst3`, or "Replace with …" for one set's plugin. Each lives in
 `Substitution.swift` plus its own file; AU devices are rewritten in place
 (`AuRetarget`). An AU → AU replacement also works in sets saved before Live 10.
 
@@ -196,10 +228,18 @@ swift run DeviceConverter [path]   # launches the app, optionally opening a
 # headless pipeline check (no GUI):
 swift run DeviceConverter --selftest "/path/to/Set.als"
 
-# headless library check: discovers a folder, prints status counts, and
-# compares the fast scanner against the DOM extractor for every set:
+# headless library check: discovers a folder, prints status counts and missing
+# samples (--list-missing lists them), and compares the fast scanner against the
+# DOM extractor for every set:
 swift run DeviceConverter --selftest-library "/path/to/Projects"
+
+# a set page's plan, and with --out the fixed copy it saves (--replace picks
+# every available replacement):
+swift run DeviceConverter --selftest-plan "/path/to/Set.als" [--replace] [--out copy.als]
 ```
+
+`--select overview|plugins|<path>` opens the app on that page, and `DC_BACKGROUND=1`
+keeps it from coming to the front (for scripted screenshots).
 
 ### As an app
 
