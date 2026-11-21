@@ -29,6 +29,14 @@ struct LiveSetScan: Codable, Sendable, Equatable {
   let vst2: [Vst2Plugin]
   let vst3: [Vst3Plugin]
   let au: [AuPlugin]
+  /// The song tempo (its value at the start, when automated).
+  var tempo: Double?
+  /// Audio and MIDI tracks.
+  var tracks = 0
+  /// Where the last arrangement clip ends, in beats.
+  var arrangementBeats: Double?
+  /// Every audio file the set refers to, once each.
+  var samples: [SampleRef] = []
 
   var predatesVst3: Bool { LiveVersion.predatesVst3(creator: creator) }
 }
@@ -103,11 +111,92 @@ enum LiveSetScanner {
           manufacturer: code("ComponentManufacturer")))
         cursor = end
       }
-      return LiveSetScan(creator: creator ?? "", vst2: plugins, vst3: vst3, au: au)
+      var out = LiveSetScan(creator: creator ?? "", vst2: plugins, vst3: vst3, au: au)
+      out.tempo = tempo(doc)
+      out.tracks = doc.count("<AudioTrack Id=") + doc.count("<MidiTrack Id=")
+      out.arrangementBeats = arrangementEnd(doc)
+      out.samples = sampleRefs(doc)
+      return out
     }
   }
 
-  private struct Bytes {
+  /// The master track's tempo: its `Manual` value, or (Live 8) the first event of
+  /// its automation.
+  private static func tempo(_ doc: Bytes) -> Double? {
+    guard let master = doc.find("<MasterTrack", from: 0),
+          let start = doc.find("<Tempo>", from: master) else { return nil }
+    let end = doc.find("</Tempo>", from: start) ?? doc.count
+    if let manual = doc.attribute("<Manual Value=", from: start, before: end) { return Double(manual) }
+    guard let event = doc.find("<FloatEvent", from: start, before: end) else { return nil }
+    return doc.attribute(" Value=", from: event, before: end).flatMap(Double.init)
+  }
+
+  /// Arrangement clips sit in `ArrangerAutomation` lists, which elsewhere only hold
+  /// automation events; a clip's `CurrentEnd` is where it ends in the arrangement.
+  private static func arrangementEnd(_ doc: Bytes) -> Double? {
+    var latest: Double?
+    var cursor = 0
+    while let start = doc.find("<ArrangerAutomation>", from: cursor) {
+      let end = doc.find("</ArrangerAutomation>", from: start) ?? doc.count
+      var at = start
+      while let hit = doc.find("<CurrentEnd Value=", from: at, before: end) {
+        if let value = doc.attribute("<CurrentEnd Value=", from: hit, before: end).flatMap(Double.init) {
+          latest = max(latest ?? value, value)
+        }
+        at = hit + 1
+      }
+      cursor = end
+    }
+    return latest
+  }
+
+  /// The file of each `SampleRef`. Live 10.1+ writes `RelativePath` and `Path` as
+  /// values; earlier versions write the relative path as elements and the
+  /// absolute one inside a Mac alias record (`Data`).
+  private static func sampleRefs(_ doc: Bytes) -> [SampleRef] {
+    var seen = Set<SampleRef>()
+    var out: [SampleRef] = []
+    var cursor = 0
+    while let ref = doc.find("<SampleRef>", from: cursor) {
+      cursor = ref + 1
+      guard let start = doc.find("<FileRef", from: ref),
+            let end = doc.find("</FileRef>", from: start) else { break }
+      cursor = end
+      let kind = doc.attribute("<RelativePathType Value=", from: start, before: end).flatMap { Int($0) } ?? 0
+      var sample: SampleRef
+      if let relative = doc.attribute("<RelativePath Value=", from: start, before: end) {
+        sample = SampleRef(
+          kind: kind, relative: relative,
+          absolute: doc.attribute("<Path Value=", from: start, before: end),
+          pack: doc.attribute("<LivePackName Value=", from: start, before: end))
+      } else {
+        var dirs: [String] = []
+        var after = start
+        if let open = doc.find("<RelativePath>", from: start, before: end),
+           let close = doc.find("</RelativePath>", from: open, before: end) {
+          var at = open
+          while let hit = doc.find("Dir=", from: at, before: close) {
+            dirs.append(doc.attribute("Dir=", from: hit, before: close) ?? "")
+            at = hit + 1
+          }
+          after = close
+        }
+        let name = doc.attribute("<Name Value=", from: after, before: end) ?? ""
+        var absolute: String?
+        if let open = doc.find("<Data>", from: after, before: end),
+           let close = doc.find("</Data>", from: open, before: end) {
+          absolute = AliasRecord.path(hex: doc.text(from: open + 6, to: close))
+        }
+        // An empty `Dir` steps up a folder.
+        let relative = (dirs.map { $0.isEmpty ? ".." : $0 } + [name]).joined(separator: "/")
+        sample = SampleRef(kind: kind, relative: relative, absolute: absolute, pack: nil)
+      }
+      if seen.insert(sample).inserted { out.append(sample) }
+    }
+    return out
+  }
+
+  fileprivate struct Bytes {
     let start: UnsafeRawPointer
     let count: Int
 
@@ -117,6 +206,19 @@ enum LiveSetScanner {
       return needle.withCString { n in
         memmem(start + from, end - from, n, strlen(n)).map { UnsafeRawPointer($0) - start }
       }
+    }
+
+    func count(_ needle: String) -> Int {
+      var n = 0, at = 0
+      while let hit = find(needle, from: at) {
+        n += 1
+        at = hit + 1
+      }
+      return n
+    }
+
+    func text(from: Int, to end: Int) -> String {
+      String(decoding: UnsafeRawBufferPointer(start: start + from, count: max(0, end - from)), as: UTF8.self)
     }
 
     /// The quoted text just after `prefix` (e.g. `<Name Value=`), XML-unescaped.
@@ -163,7 +265,7 @@ struct LiveSetScanCache {
   /// Bump when `LiveSetScan`'s meaning changes.
   private static let fileURL = FileManager.default
     .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("DeviceConverter/live-set-scans-v3.json")
+    .appendingPathComponent("DeviceConverter/live-set-scans-v4.json")
 
   static func load() -> LiveSetScanCache {
     var cache = LiveSetScanCache()

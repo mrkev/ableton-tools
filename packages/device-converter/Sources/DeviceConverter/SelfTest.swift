@@ -23,6 +23,11 @@ enum SelfTest {
     var reasons: [String: String] = [:]
     var mismatches = 0, unreadable = 0
     var scanTime = 0.0, domTime = 0.0
+    let locations = LiveLocations.current()
+    let index = SampleIndex.build(locations)
+    var namesakes = 0
+    let listMissing = CommandLine.arguments.contains("--list-missing")
+    var setsMissing = 0, filesMissing = 0, freezeMissing = 0, noTempo = 0
     for set in sets {
       do {
         var t = Date()
@@ -32,6 +37,17 @@ enum SelfTest {
         let status = SetStatus.resolve(
           scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory)
         counts[status.kind, default: 0] += 1
+        let missing = locations.missing(in: scan, setURL: set.url, index: index)
+        let real = missing.filter { !$0.isFreeze }
+        if !real.isEmpty { setsMissing += 1 }
+        filesMissing += real.count
+        namesakes += real.filter(\.hasNamesake).count
+        freezeMissing += missing.count - real.count
+        if scan.tempo == nil { noTempo += 1 }
+        if listMissing && !real.isEmpty {
+          print("  \(set.url.lastPathComponent): \(scan.samples.count) samples, \(real.count) missing")
+          for m in real.prefix(5) { print("    \(m.hasNamesake ? "≈ " : "")\(m.lastKnown)") }
+        }
         if case .stuck(let plugins, _) = status {
           for p in plugins {
             stuckSets[p.name, default: []].insert(set.url)
@@ -72,6 +88,7 @@ enum SelfTest {
     for (name, urls) in stuckSets.sorted(by: { ($0.value.count, $1.key) > ($1.value.count, $0.key) }) {
       print("  stuck: \(urls.count) sets on \(name) (\(reasons[name] ?? ""))")
     }
+    print("  missing samples: \(filesMissing) in \(setsMissing) sets (\(namesakes) have a namesake in the library; +\(freezeMissing) freeze files); \(noTempo) sets without a tempo")
     print(String(format: "scan %.1fs, DOM %.1fs; %d mismatches, %d unreadable",
                  scanTime, domTime, mismatches, unreadable))
     return mismatches == 0 ? 0 : 1
