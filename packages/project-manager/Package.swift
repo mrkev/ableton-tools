@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-  name: "DeviceConverter",
+  name: "ProjectManager",
   platforms: [.macOS(.v14)],
   targets: [
     // Thin C shim over the system zlib for gzip (de)compression of .als files.
@@ -16,7 +16,7 @@ let package = Package(
       linkerSettings: [.linkedFramework("CoreFoundation")]
     ),
     .executableTarget(
-      name: "DeviceConverter",
+      name: "ProjectManager",
       dependencies: ["CGzip", "CVst3Host"],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),

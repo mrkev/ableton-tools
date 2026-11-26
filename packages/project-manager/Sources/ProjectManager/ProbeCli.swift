@@ -8,7 +8,7 @@ enum ProbeCli {
   @MainActor static func run(arguments args: [String]) -> Int32 {
     setlinebuf(stdout)
     guard let i = args.firstIndex(of: "--probe-vst3"), i + 1 < args.count else {
-      print("usage: DeviceConverter --probe-vst3 <bundle.vst3> [--state <file>]")
+      print("usage: ProjectManager --probe-vst3 <bundle.vst3> [--state <file>]")
       return 2
     }
     let bundle = URL(fileURLWithPath: args[i + 1])

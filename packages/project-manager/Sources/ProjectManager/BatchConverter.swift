@@ -223,7 +223,7 @@ final class BatchRun {
 
 /// Headless batch conversion:
 ///
-///     DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals)
+///     ProjectManager --batch <folder> (--out-dir <dir> | --beside-originals)
 ///                     [--include-partial] [--include-native] [--substitute-orbit] [--substitute-pro-c]
 ///                     [--dry-run]
 ///
@@ -235,7 +235,7 @@ final class BatchRun {
 /// There's deliberately no default destination: writing into project folders
 /// has to be asked for.
 enum BatchCli {
-  private static let usage = "usage: DeviceConverter --batch <folder> "
+  private static let usage = "usage: ProjectManager --batch <folder> "
     + "(--out-dir <dir> | --beside-originals) [--include-partial] [--include-native] "
     + Substitution.allCases.map { "[\($0.cliFlag)] " }.joined() + "[--dry-run]"
 

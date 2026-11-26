@@ -40,7 +40,7 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
       re-renders fully on each edit (index-path props bust `React.memo`).
       Virtualize / stabilize if big files get sluggish.
 
-## Device Converter (native macOS app — `packages/device-converter`)
+## Ableton Project Manager (native macOS app — `packages/project-manager`)
 
 - [ ] **Validate the generated AU block against Live 11.** `DeviceBuilder.swift`
       produces a best-effort `<AuPluginDevice>` (identity + envelope, default
@@ -67,7 +67,7 @@ Running list of deferred work. Grouped by area; roughly ordered by value.
       Does Live relink moved Core Library samples (Live 9 → 11 layout) by itself?
 - [ ] **Relink samples** — for samples with a namesake, write the found path into a
       fixed copy (needs size/CRC checks against `SearchHint` to pick the right file).
-- [ ] **Rename the app** now that it manages projects, not only devices.
+- [x] **Rename the app** to Ableton Project Manager (`packages/project-manager`).
 - [x] **Native status** — whether each set opens in a native Live, across VST2, VST3
       and AU.
 - [x] **VST2 → VST3: batch conversion** from the library or `--batch`.

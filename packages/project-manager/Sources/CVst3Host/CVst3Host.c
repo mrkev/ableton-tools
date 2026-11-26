@@ -234,7 +234,7 @@ static tresult host_qi(Host *self, const TUID iid, void **obj) {
 static uint32_t host_ref(Host *self) { (void)self; return 1; }
 static tresult host_getName(Host *self, uint16_t name[128]) {
   (void)self;
-  const char *n = "Ableton Device Converter";
+  const char *n = "Ableton Project Manager";
   size_t i = 0;
   for (; n[i] && i < 127; i++) name[i] = (uint16_t)n[i];
   name[i] = 0;

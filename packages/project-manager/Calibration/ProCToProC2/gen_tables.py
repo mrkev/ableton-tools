@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write Sources/DeviceConverter/ProCTables.swift from the calibration measurements.
+"""Write Sources/ProjectManager/ProCTables.swift from the calibration measurements.
 
     gen_tables.py <measurements dir> <out.swift>
 

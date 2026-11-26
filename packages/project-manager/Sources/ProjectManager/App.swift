@@ -11,8 +11,9 @@ func exitSkippingPluginTeardown(_ code: Int32) -> Never {
 }
 
 @main
-enum DeviceConverterApp {
+enum ProjectManagerApp {
   @MainActor static func main() {
+    LegacyMigration.run()
     // Headless verification path (no GUI): --selftest <file.als>
     let args = CommandLine.arguments
     if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
@@ -50,7 +51,7 @@ enum DeviceConverterApp {
     }
 
     let model = AppModel()
-    // `DeviceConverter <path>` opens a library, project folder or set on launch.
+    // `ProjectManager <path>` opens a library, project folder or set on launch.
     // Arguments that follow an option are its value, not a path.
     let valued: Set<String> = ["--select"]
     let paths = args.indices.dropFirst().filter { !args[$0].hasPrefix("-") && !valued.contains(args[$0 - 1]) }
@@ -93,7 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered, defer: false)
-    window.title = "Device Converter"
+    // Named in the Window menu and Mission Control; each page has its own heading.
+    window.title = "Ableton Project Manager"
+    window.titleVisibility = .hidden
     window.center()
     window.setFrameAutosaveName("MainWindow")
     window.contentView = NSHostingView(rootView: root)
@@ -153,12 +156,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     mainMenu.addItem(appItem)
     let appMenu = NSMenu()
     appMenu.addItem(
-      withTitle: "About Device Converter", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+      withTitle: "About Ableton Project Manager", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
       keyEquivalent: "")
     appMenu.addItem(.separator())
     appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
     appMenu.addItem(.separator())
-    appMenu.addItem(withTitle: "Hide Device Converter", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+    appMenu.addItem(withTitle: "Hide Ableton Project Manager", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     appMenu.addItem(
       withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     appItem.submenu = appMenu

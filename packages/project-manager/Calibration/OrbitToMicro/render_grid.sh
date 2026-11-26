@@ -24,4 +24,4 @@ mkdir -p grid
     add "rev_a${a}_off" "param_azimuth=$a param_elevation=30 param_width=50 param_reflection_enable=0" 0
   done
 } | xargs -P 8 -L 1 sh -c 'arch -x86_64 ./aurender_x86 "$0" impulse.wav "$@" >/dev/null 2>&1 || echo "FAILED $1"'
-echo "now: python3 gen_table.py . ../../Sources/DeviceConverter/OrbitGainTable.swift"
+echo "now: python3 gen_table.py . ../../Sources/ProjectManager/OrbitGainTable.swift"

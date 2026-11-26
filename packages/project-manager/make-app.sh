@@ -1,14 +1,14 @@
 #!/bin/zsh
-# Builds "Device Converter.app" from the Swift package.
+# Builds "Ableton Project Manager.app" from the Swift package.
 #
-#     ./make-app.sh            # → build/Device Converter.app
+#     ./make-app.sh            # → build/Ableton Project Manager.app
 #     ./make-app.sh --install  # also copies it to ~/Applications
 #
 # The package stays the source of truth; this only wraps the release binary in a
 # bundle (Info.plist, icon) and signs it ad hoc for this Mac. The command-line modes
 # keep working through the binary inside it:
 #
-#     "build/Device Converter.app/Contents/MacOS/DeviceConverter" --batch …
+#     "build/Ableton Project Manager.app/Contents/MacOS/ProjectManager" --batch …
 #
 # It isn't sandboxed and has no hardened runtime: it loads third-party plugins and
 # reads your whole library. Sharing it with other Macs would need a Developer ID
@@ -16,18 +16,18 @@
 set -euo pipefail
 cd "${0:A:h}"
 
-name="Device Converter"
+name="Ableton Project Manager"
 app="build/$name.app"
 version="0.1"
 build_number=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 swift build -c release
-bin=$(swift build -c release --show-bin-path)/DeviceConverter
+bin=$(swift build -c release --show-bin-path)/ProjectManager
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin" "$app/Contents/MacOS/DeviceConverter"
+cp "$bin" "$app/Contents/MacOS/ProjectManager"
 cp App/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 
 # .als files and folders are "Alternate": the app shows under Open With and takes
@@ -39,8 +39,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>$name</string>
   <key>CFBundleDisplayName</key><string>$name</string>
-  <key>CFBundleIdentifier</key><string>dev.ableton-tools.device-converter</string>
-  <key>CFBundleExecutable</key><string>DeviceConverter</string>
+  <key>CFBundleIdentifier</key><string>dev.ableton-tools.project-manager</string>
+  <key>CFBundleExecutable</key><string>ProjectManager</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$build_number</string>

@@ -3,7 +3,7 @@ import Foundation
 /// Headless VST2 → VST3 migration of one Live Set (plus Intel-only AUs built
 /// around a VST2 whose VST3 replaces them):
 ///
-///     DeviceConverter --vst3 <in.als> [--out <out.als>] [--substitute-orbit] [--substitute-pro-c]
+///     ProjectManager --vst3 <in.als> [--out <out.als>] [--substitute-orbit] [--substitute-pro-c]
 ///                     [--dry-run] [--verbose] [--force]
 ///
 /// Converts every VST2 device that has an installed (and natively loadable)
@@ -15,7 +15,7 @@ enum Vst3Cli {
   @MainActor static func run(arguments args: [String]) async -> Int32 {
     setlinebuf(stdout)
     guard let i = args.firstIndex(of: "--vst3"), i + 1 < args.count else {
-      print("usage: DeviceConverter --vst3 <in.als> [--out <out.als>] "
+      print("usage: ProjectManager --vst3 <in.als> [--out <out.als>] "
         + Substitution.allCases.map { "[\($0.cliFlag)] " }.joined() + "[--dry-run] [--verbose] [--force]")
       return 2
     }

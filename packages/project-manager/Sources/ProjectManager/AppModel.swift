@@ -140,7 +140,7 @@ final class AppModel: ObservableObject {
   private var scanTask: Task<Void, Never>?
   private var catalogWatcher: Task<Void, Never>?
   private var optInWatcher: Task<Void, Never>?
-  private var setModels: [URL: ConverterModel] = [:]
+  private var setModels: [URL: SetModel] = [:]
   private var sampleTask: Task<Void, Never>?
   private var sizeTasks: Set<URL> = []
 
@@ -218,9 +218,9 @@ final class AppModel: ObservableObject {
   // MARK: Set models
 
   /// A set's state, kept while it's selected or has choices queued.
-  func model(for url: URL) -> ConverterModel {
+  func model(for url: URL) -> SetModel {
     if let existing = setModels[url] { return existing }
-    let model = ConverterModel(url: url, catalogs: catalogs)
+    let model = SetModel(url: url, catalogs: catalogs)
     model.onSaved = { [weak self] in self?.rescan() }
     setModels[url] = model
     return model
@@ -234,7 +234,7 @@ final class AppModel: ObservableObject {
     return nil
   }
 
-  var activeModel: ConverterModel? { focusedSetURL.flatMap { setModels[$0] } }
+  var activeModel: SetModel? { focusedSetURL.flatMap { setModels[$0] } }
 
   /// A parsed set can take a lot of memory, so idle ones aren't kept around.
   private func dropIdleSetModels() {

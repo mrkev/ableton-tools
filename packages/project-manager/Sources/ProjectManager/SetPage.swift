@@ -5,7 +5,7 @@ import SwiftUI
 struct SetPageView: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
-  @EnvironmentObject var model: ConverterModel
+  @EnvironmentObject var model: SetModel
   @State private var choosingFor: PluginGroup?
 
   var body: some View {
@@ -194,7 +194,7 @@ enum SetFacts {
 private struct VerdictCard: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
-  @EnvironmentObject var model: ConverterModel
+  @EnvironmentObject var model: SetModel
 
   private struct Verdict {
     var icon: String
@@ -321,7 +321,7 @@ private struct CopyCard: View {
 /// One plugin in the set: what happens to it, and the choice of what to do.
 private struct PluginGroupRow: View {
   @EnvironmentObject var catalogs: PluginCatalogs
-  @EnvironmentObject var model: ConverterModel
+  @EnvironmentObject var model: SetModel
   let group: PluginGroup
   @Binding var choosingFor: PluginGroup?
   @State private var expanded = false

@@ -265,7 +265,7 @@ struct LiveSetScanCache {
   /// Bump when `LiveSetScan`'s meaning changes.
   private static let fileURL = FileManager.default
     .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("DeviceConverter/live-set-scans-v4.json")
+    .appendingPathComponent("ProjectManager/live-set-scans-v4.json")
 
   static func load() -> LiveSetScanCache {
     var cache = LiveSetScanCache()

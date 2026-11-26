@@ -1,7 +1,9 @@
-# Ableton Device Converter
+# Ableton Project Manager
 
-A native macOS (SwiftUI) tool for converting plugin **devices** inside an
-Ableton Live Set (`.als`) from one plugin format to another, so a set that
+A native macOS (SwiftUI) app for looking after a library of Ableton Live projects:
+which sets open in a native (Apple Silicon) Live, what plugins and samples they
+depend on, and fixing them one set at a time. Fixing converts plugin **devices**
+inside a Live Set (`.als`) from one plugin format to another, so a set that
 references a plugin your Live can't load will open again:
 
 - **VST2 → VST3** (GUI and headless CLI, keeps the plugin's settings) — for VST2
@@ -71,7 +73,7 @@ sidebar or a table.
 ## VST2 → VST3 migration
 
 ```sh
-swift run DeviceConverter --vst3 "/path/to/Set.als" [--out out.als] [--dry-run] [--verbose] [--force]
+swift run ProjectManager --vst3 "/path/to/Set.als" [--out out.als] [--dry-run] [--verbose] [--force]
 ```
 
 Writes `<Set>-vst3.als` next to the original (never overwrites it) and prints
@@ -127,7 +129,7 @@ File › Fix Sets in Bulk…, "Fix several at once…" on a library or project p
 from the command line:
 
 ```sh
-swift run DeviceConverter --batch <folder> (--out-dir <dir> | --beside-originals) \\
+swift run ProjectManager --batch <folder> (--out-dir <dir> | --beside-originals) \\
   [--include-partial] [--include-native] [--substitute-orbit] [--substitute-pro-c] [--dry-run]
 ```
 
@@ -220,22 +222,22 @@ exposed parameters.
 ## Build & run
 
 ```sh
-cd packages/device-converter
+cd packages/project-manager
 swift build
-swift run DeviceConverter [path]   # launches the app, optionally opening a
+swift run ProjectManager [path]   # launches the app, optionally opening a
                                    # library, project folder or set
 
 # headless pipeline check (no GUI):
-swift run DeviceConverter --selftest "/path/to/Set.als"
+swift run ProjectManager --selftest "/path/to/Set.als"
 
 # headless library check: discovers a folder, prints status counts and missing
 # samples (--list-missing lists them), and compares the fast scanner against the
 # DOM extractor for every set:
-swift run DeviceConverter --selftest-library "/path/to/Projects"
+swift run ProjectManager --selftest-library "/path/to/Projects"
 
 # a set page's plan, and with --out the fixed copy it saves (--replace picks
 # every available replacement):
-swift run DeviceConverter --selftest-plan "/path/to/Set.als" [--replace] [--out copy.als]
+swift run ProjectManager --selftest-plan "/path/to/Set.als" [--replace] [--out copy.als]
 ```
 
 `--select overview|plugins|<path>` opens the app on that page, and `DC_BACKGROUND=1`
@@ -244,7 +246,7 @@ keeps it from coming to the front (for scripted screenshots).
 ### As an app
 
 ```sh
-./make-app.sh             # → build/Device Converter.app
+./make-app.sh             # → build/Ableton Project Manager.app
 ./make-app.sh --install   # also copies it to ~/Applications
 ```
 
@@ -252,9 +254,11 @@ Wraps the release build in a bundle (Info.plist, icon from `App/AppIcon.icns`, d
 by `App/make-icon.swift`) and signs it ad hoc for this Mac. Open a library, project or
 set with "Open With" or by dropping it on the Dock icon; the app is only an alternate
 handler for `.als`, so double-clicking a set still opens Live. The command-line modes
-work through `Device Converter.app/Contents/MacOS/DeviceConverter`. Inside the bundle,
+work through `Ableton Project Manager.app/Contents/MacOS/ProjectManager`. Inside the bundle,
 settings (like the opted-in replacements) are kept under its bundle id,
-`dev.ableton-tools.device-converter`, separately from `swift run`'s.
+`dev.ableton-tools.project-manager`, separately from `swift run`'s. (The app was
+called Device Converter; on first launch it copies the old settings and scan cache
+across.)
 
 Requires the macOS toolchain (Xcode). Not part of the pnpm workspace — it's a
 standalone SwiftPM package that happens to live under `packages/`. It stays a package
@@ -285,10 +289,15 @@ previews.
 | `ProCTables.swift` | measured Pro-C → Pro-C 2 timing, makeup and link tables (generated) |
 | `UtilityDevice.swift` | build a Live Utility; allocate ids from `NextPointeeId` |
 | `AppModel.swift` | what's open, scanning, statuses, summaries; shared plugin catalogs |
-| `ConverterModel.swift` | one open set: its DOM, slots, auto-suggest, save |
+| `SetModel.swift` | one open set: its DOM, slots, auto-suggest, save |
 | `Library.swift` | folder discovery and the `SetStatus` rule |
 | `LiveSetScan.swift` | fast scan of a set's plugins, and its on-disk cache |
 | `PluginInventory.swift` | what's installed in each format, and which builds are native |
-| `Views.swift` | the two-column device view for one set |
-| `LibraryViews.swift` | root view, sidebar and summary pane |
+| `PluginIndex.swift` | every plugin across the library, and what each needs |
+| `Samples.swift` | sample references, Live's library locations, missing samples |
+| `SetPage.swift` | a set's page: verdict, fixed copy, plugins, samples |
+| `LibraryPages.swift` | All Projects / project pages, sets table, Plugins page |
+| `LibraryViews.swift` | root view, sidebar, batch sheet |
+| `Settings.swift` | Settings window (replacement defaults) |
+| `Views.swift` | format badge, Audio Unit picker |
 | `App.swift` | AppKit bootstrap + menu |

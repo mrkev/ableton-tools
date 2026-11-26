@@ -42,7 +42,7 @@ struct PluginGroup: Identifiable {
 /// Live, with the replacements turned on in Settings); the user can override it
 /// per plugin. Overrides are all that `actions` holds.
 @MainActor
-final class ConverterModel: ObservableObject {
+final class SetModel: ObservableObject {
   let url: URL
   private let catalogs: PluginCatalogs
   /// Called after a file is written, so the library can refresh its statuses.

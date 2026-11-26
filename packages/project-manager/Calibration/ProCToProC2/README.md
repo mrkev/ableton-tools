@@ -12,7 +12,7 @@ python3 measure.py                  # auto gain table, its attack factor, stereo
 # fit_timing.py needs lab/sig/prog8.wav: 8 s of program material. We used 3 s of
 # drums (plugin-lab's signals.py), 3 s of a dry vocal and 2 s of a full mix.
 python3 fit_timing.py               # ~90 min
-python3 gen_tables.py lab ../../Sources/DeviceConverter/ProCTables.swift
+python3 gen_tables.py lab ../../Sources/ProjectManager/ProCTables.swift
 python3 e2e.py signal.wav original.als converted.als ...   # check converted sets
 ```
 

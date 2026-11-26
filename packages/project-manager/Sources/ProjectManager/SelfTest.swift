@@ -101,7 +101,7 @@ enum SelfTest {
     guard let i = args.firstIndex(of: "--selftest-plan"), i + 1 < args.count else { return 2 }
     let catalogs = PluginCatalogs()
     while catalogs.isLoading { try? await Task.sleep(for: .milliseconds(100)) }
-    let model = ConverterModel(url: URL(fileURLWithPath: args[i + 1]), catalogs: catalogs)
+    let model = SetModel(url: URL(fileURLWithPath: args[i + 1]), catalogs: catalogs)
     await model.loadIfNeeded()
     if let error = model.loadError {
       print("couldn't open: \(error)")
