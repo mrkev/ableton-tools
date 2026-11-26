@@ -125,7 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let scope = model.batchScope
     model.presentBatch(for: scope.sets, title: scope.title)
   }
-  @objc func openInLive() { focusedURL.map(LiveApps.open) }
+  @objc func openInLive() { focusedSetChoices?.open() }
+  @objc func openInChosenLive(_ sender: NSMenuItem) {
+    guard let live = sender.representedObject as? LiveApp else { return }
+    focusedSetChoices?.open(in: live)
+  }
+
+  /// How the set on screen can be opened; nil when no set is.
+  private var focusedSetChoices: OpenChoices? {
+    guard let url = focusedURL, url.pathExtension.lowercased() == "als" else { return nil }
+    return OpenChoices(url: url, app: model)
+  }
   @objc func showInFinder() { focusedURL.map { NSWorkspace.shared.activateFileViewerSelecting([$0]) } }
 
   /// The set, or else the project, on screen.
@@ -178,8 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     fileMenu.addItem(withTitle: "Fix Sets in Bulk…", action: #selector(fixInBulk), keyEquivalent: "")
       .target = self
     fileMenu.addItem(.separator())
-    fileMenu.addItem(withTitle: "Open in \(LiveApps.newestName)", action: #selector(openInLive), keyEquivalent: "l")
+    // Titled for the set on screen ("Open in Live 10") as the menu opens.
+    fileMenu.addItem(withTitle: "Open in Live", action: #selector(openInLive), keyEquivalent: "l")
       .target = self
+    let openIn = fileMenu.addItem(withTitle: "Open In", action: nil, keyEquivalent: "")
+    openIn.submenu = NSMenu(title: "Open In")
+    openIn.submenu?.delegate = self
     let finder = fileMenu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "r")
     finder.keyEquivalentModifierMask = [.command, .shift]
     finder.target = self
@@ -211,5 +225,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.windowsMenu = windowMenu
 
     NSApp.mainMenu = mainMenu
+  }
+}
+
+extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
+  func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    switch item.action {
+    case #selector(openInLive):
+      let choices = focusedSetChoices
+      item.title = choices?.title ?? "Open in Live"
+      return choices.map { !$0.tooNew } ?? false
+    case #selector(openInChosenLive(_:)):
+      return true
+    default:
+      return true
+    }
+  }
+
+  /// File › Open In: every installed Live, with those too old for the set greyed out.
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    menu.removeAllItems()
+    let choices = focusedSetChoices
+    let usable = choices.map { Set([$0.preferred].compactMap { $0 } + $0.later) } ?? []
+    for live in LiveApps.installed.reversed() {
+      let item = NSMenuItem(title: live.name, action: nil, keyEquivalent: "")
+      item.toolTip = live.url.path
+      if #available(macOS 14.4, *) { item.subtitle = live.detail }
+      if usable.contains(live) {
+        item.action = #selector(openInChosenLive(_:))
+        item.target = self
+        item.representedObject = live
+        if live == choices?.preferred { item.state = .on }
+      }
+      menu.addItem(item)
+    }
+    if LiveApps.installed.isEmpty {
+      menu.addItem(withTitle: "No Live Installed", action: nil, keyEquivalent: "")
+    }
   }
 }

@@ -41,20 +41,6 @@ struct LiveSetScan: Codable, Sendable, Equatable {
   var predatesVst3: Bool { LiveVersion.predatesVst3(creator: creator) }
 }
 
-enum LiveVersion {
-  /// 10 for "Ableton Live 10.1.40".
-  static func major(creator: String) -> Int? {
-    creator.split(separator: " ").last?.split(separator: ".").first.flatMap { Int($0) }
-  }
-
-  /// VST3 support (and the block layout we write) arrived in Live 10.
-  /// `creator` looks like "Ableton Live 10.1.40".
-  static func predatesVst3(creator: String) -> Bool {
-    guard let major = major(creator: creator) else { return false }
-    return major < 10
-  }
-}
-
 /// Reads plugin facts straight from a set's decompressed bytes. Building a DOM
 /// for hundreds of sets is too slow and memory-hungry just to fill a sidebar;
 /// `--selftest-library` checks this agrees with `DeviceExtractor`.

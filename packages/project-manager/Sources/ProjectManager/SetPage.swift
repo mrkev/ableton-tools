@@ -29,10 +29,7 @@ struct SetPageView: View {
     .onAppear { app.scanIfNeeded(model.url) }
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
-        Button { LiveApps.open(model.url) } label: {
-          Label("Open in \(LiveApps.newestName)", systemImage: "play.circle")
-        }
-        .help("Open this set in \(LiveApps.newestName)")
+        OpenInLiveButton(url: model.url, showsIcon: false)
         Button { NSWorkspace.shared.activateFileViewerSelecting([model.url]) } label: {
           Label("Show in Finder", systemImage: "folder")
         }
@@ -307,7 +304,8 @@ private struct CopyCard: View {
         }
         Spacer()
         Button("View") { app.reveal(copy) }
-        Button("Open in \(LiveApps.newestName)") { LiveApps.open(copy) }
+        OpenInLiveButton(url: copy, showsIcon: false)
+          .fixedSize()
       }
       .padding(12)
       .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))

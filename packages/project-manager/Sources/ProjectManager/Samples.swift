@@ -45,7 +45,7 @@ struct LiveLocations: Sendable {
 
   static func current() -> LiveLocations {
     var out = LiveLocations()
-    if let live = LiveApps.newest() {
+    if let live = LiveApps.newest {
       out.coreLibrary = live.url.appendingPathComponent("Contents/App-Resources/Core Library")
     }
     let home = FileManager.default.homeDirectoryForCurrentUser
@@ -184,39 +184,5 @@ enum AliasRecord {
     guard let path else { return nil }
     let root = (mount == nil || mount == "/") ? "" : mount!
     return root + (path.hasPrefix("/") ? path : "/" + path)
-  }
-}
-
-/// Installed copies of Live.
-enum LiveApps {
-  struct App {
-    let url: URL
-    let version: String
-    /// "Live 11"
-    var name: String { "Live " + (version.split(separator: ".").first.map(String.init) ?? version) }
-  }
-
-  static func installed() -> [App] {
-    NSWorkspace.shared.urlsForApplications(withBundleIdentifier: "com.ableton.live").compactMap { url in
-      guard let version = Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-      else { return nil }
-      return App(url: url, version: String(version.split(separator: " ").first ?? ""))
-    }
-  }
-
-  /// The newest Live, which is the one to open sets in.
-  static func newest() -> App? {
-    installed().max { $0.version.localizedStandardCompare($1.version) == .orderedAscending }
-  }
-
-  /// "Live 11", for buttons. Looked up once.
-  @MainActor static let newestName = newest()?.name ?? "Live"
-
-  static func open(_ set: URL) {
-    guard let live = newest() else {
-      NSWorkspace.shared.open(set)
-      return
-    }
-    NSWorkspace.shared.open([set], withApplicationAt: live.url, configuration: NSWorkspace.OpenConfiguration())
   }
 }

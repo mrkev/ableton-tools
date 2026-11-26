@@ -90,7 +90,8 @@ struct SetsTable: View {
     .contextMenu(forSelectionType: URL.self) { urls in
       if urls.count == 1, let url = urls.first {
         Button("Show Set") { app.reveal(url) }
-        Button("Open in \(LiveApps.newestName)") { LiveApps.open(url) }
+        OpenInLiveItems(url: url, app: app)
+        Divider()
       }
       Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(Array(urls)) }
       if urls.count > 1 {

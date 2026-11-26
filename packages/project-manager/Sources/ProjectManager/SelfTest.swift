@@ -28,6 +28,7 @@ enum SelfTest {
     var namesakes = 0
     let listMissing = CommandLine.arguments.contains("--list-missing")
     var setsMissing = 0, filesMissing = 0, freezeMissing = 0, noTempo = 0
+    var opensIn: [String: Int] = [:]
     for set in sets {
       do {
         var t = Date()
@@ -44,6 +45,9 @@ enum SelfTest {
         namesakes += real.filter(\.hasNamesake).count
         freezeMissing += missing.count - real.count
         if scan.tempo == nil { noTempo += 1 }
+        let preferred = LiveApps.preferred(forCreator: scan.creator)
+        let later = LiveApps.compatible(withCreator: scan.creator).filter { $0 != preferred }.map(\.name)
+        opensIn[(preferred?.name ?? "no Live") + (later.isEmpty ? "" : " (or \(later.joined(separator: ", ")))"), default: 0] += 1
         if listMissing && !real.isEmpty {
           print("  \(set.url.lastPathComponent): \(scan.samples.count) samples, \(real.count) missing")
           for m in real.prefix(5) { print("    \(m.hasNamesake ? "≈ " : "")\(m.lastKnown)") }
@@ -88,6 +92,8 @@ enum SelfTest {
     for (name, urls) in stuckSets.sorted(by: { ($0.value.count, $1.key) > ($1.value.count, $0.key) }) {
       print("  stuck: \(urls.count) sets on \(name) (\(reasons[name] ?? ""))")
     }
+    print("  Live installed: " + LiveApps.installed.map { "\($0.name) (\($0.detail))" }.joined(separator: ", "))
+    for (live, count) in opensIn.sorted(by: { $0.key < $1.key }) { print("  opens in \(live): \(count)") }
     print("  missing samples: \(filesMissing) in \(setsMissing) sets (\(namesakes) have a namesake in the library; +\(freezeMissing) freeze files); \(noTempo) sets without a tempo")
     print(String(format: "scan %.1fs, DOM %.1fs; %d mismatches, %d unreadable",
                  scanTime, domTime, mismatches, unreadable))

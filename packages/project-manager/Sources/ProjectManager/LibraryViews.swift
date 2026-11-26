@@ -228,8 +228,21 @@ private struct SetRow: View {
       }
     }
     .help(status.detail)
+    .contextMenu { SetRowMenu(url: set.url) }
     .tag(SidebarItem.set(set.url))
     .id(SidebarItem.set(set.url))
+  }
+}
+
+/// A sidebar set's context menu.
+private struct SetRowMenu: View {
+  @EnvironmentObject var app: AppModel
+  let url: URL
+
+  var body: some View {
+    OpenInLiveItems(url: url, app: app)
+    Divider()
+    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
   }
 }
 
@@ -249,6 +262,7 @@ private struct CopyRow: View {
     }
     .padding(.leading, 18)
     .help(url.lastPathComponent)
+    .contextMenu { SetRowMenu(url: url) }
     .tag(SidebarItem.set(url))
     .id(SidebarItem.set(url))
   }

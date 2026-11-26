@@ -63,7 +63,13 @@ File › Rescan picks up changes.
   the same name somewhere in the libraries or Places, which Live's File Manager can
   likely relink. Missing freeze files are listed apart.
 
-Open in Live and Show in Finder are in the toolbar and the File menu. Settings
+**Opening a set.** The app finds every installed Live (and whether each is native
+or Intel-only, running under Rosetta, where Intel-only plugins still load). A set
+opens by default in the oldest installed Live that can open it, so it stays in the
+version that saved it rather than being upgraded; Live refuses sets from a newer
+major or minor release, so older Lives aren't offered. When a later Live is
+installed, the Open button's menu (and the context menus, and File › Open In)
+offers it. Open and Show in Finder are in the toolbar and the File menu. Settings
 holds the replacements' defaults.
 
 To fix many sets at once, use File › Fix Sets in Bulk… (for what's selected in the
@@ -294,6 +300,7 @@ previews.
 | `LiveSetScan.swift` | fast scan of a set's plugins, and its on-disk cache |
 | `PluginInventory.swift` | what's installed in each format, and which builds are native |
 | `PluginIndex.swift` | every plugin across the library, and what each needs |
+| `LiveApps.swift` | installed Lives, which can open a set, the Open button and menus |
 | `Samples.swift` | sample references, Live's library locations, missing samples |
 | `SetPage.swift` | a set's page: verdict, fixed copy, plugins, samples |
 | `LibraryPages.swift` | All Projects / project pages, sets table, Plugins page |
