@@ -479,6 +479,12 @@ final class AppModel: ObservableObject {
     return context(for: url).original.flatMap(copyStatus) ?? .scanning
   }
 
+  /// Which Live a set loads in as saved; nil until it's scanned.
+  func kind(of url: URL) -> SetKind? {
+    guard let scan = scans[url], let inventory = catalogs.inventory else { return nil }
+    return inventory.kind(of: scan)
+  }
+
   /// Missing samples that nothing of the same name could stand in for.
   func lostSamples(of url: URL) -> Int {
     missingSamples[url]?.filter { !$0.isFreeze && !$0.hasNamesake }.count ?? 0

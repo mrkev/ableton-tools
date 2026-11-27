@@ -7,6 +7,7 @@ struct SetTableRow: Identifiable {
   let name: String
   let project: String
   let status: SetStatus
+  let kind: SetKind?
   let version: String
   let versionKey: Int
   let tempo: Double
@@ -23,6 +24,7 @@ struct SetTableRow: Identifiable {
   let modified: Date
 
   var statusRank: Int { status.kind.rawValue }
+  var kindRank: Int { kind?.rawValue ?? -1 }
 
   /// A scan lists every device; count each plugin once per format.
   private static func pluginCount(_ scan: LiveSetScan) -> Int {
@@ -38,6 +40,7 @@ struct SetTableRow: Identifiable {
     name = set.name
     self.project = project.name
     status = app.status(of: set)
+    kind = app.kind(of: set.url)
     version = scan.flatMap { SetFacts.version($0.creator) } ?? ""
     versionKey = scan.map { SetFacts.versionKey($0.creator) } ?? 0
     tempo = scan?.tempo ?? 0
@@ -107,7 +110,7 @@ struct SetsTable: View {
 
   /// Which set, and how it fares.
   @Columns private var identity: some TableColumnContent<SetTableRow, KeyPathComparator<SetTableRow>> {
-    TableColumn("Set", value: \.name) { row in Text(row.name).lineLimit(1) }
+    TableColumn("Set Name", value: \.name) { row in Text(row.name).lineLimit(1) }
       .width(min: 140, ideal: 220)
       .customizationID("set")
       .disabledCustomizationBehavior(.visibility)
@@ -126,12 +129,19 @@ struct SetsTable: View {
     }
     .width(min: 120, ideal: 170)
     .customizationID("status")
+    TableColumn("Kind", value: \.kindRank) { row in
+      // Only Native and x86-64 sets load anywhere.
+      Text(row.kind?.title ?? "").foregroundStyle(row.kind.map { $0 > .x86_64 } == true ? .red : .primary)
+        .help(row.kind?.explanation ?? "")
+    }
+    .width(min: 50, ideal: 70)
+    .customizationID("kind")
   }
 
   /// What's in it.
   @Columns private var music: some TableColumnContent<SetTableRow, KeyPathComparator<SetTableRow>> {
-    TableColumn("Live", value: \.versionKey) { row in Text(row.version).monospacedDigit() }
-      .width(min: 50, ideal: 70)
+    TableColumn("Live Version", value: \.versionKey) { row in Text(row.version).monospacedDigit() }
+      .width(min: 70, ideal: 84)
       .customizationID("live")
     TableColumn("Tempo", value: \.tempo) { row in
       Text(row.tempo > 0 ? SetFacts.tempoText(row.tempo).replacingOccurrences(of: " BPM", with: "") : "")
@@ -139,6 +149,7 @@ struct SetsTable: View {
     }
     .width(min: 44, ideal: 56)
     .customizationID("tempo")
+    .defaultVisibility(.hidden)
     TableColumn("Length", value: \.seconds) { row in
       Text(row.seconds > 0 ? SetFacts.duration(row.seconds) : "").monospacedDigit()
     }
@@ -158,13 +169,13 @@ struct SetsTable: View {
       .width(min: 44, ideal: 58)
       .customizationID("samples")
       .defaultVisibility(.hidden)
-    TableColumn("Missing", value: \.lostSamples) { row in
+    TableColumn("Missing Samples", value: \.lostSamples) { row in
       if row.lostSamples > 0 {
         Text("\(row.lostSamples)").monospacedDigit().foregroundStyle(.orange)
           .help("\(plural(row.lostSamples, "sample")) can't be found")
       }
     }
-    .width(min: 44, ideal: 56)
+    .width(min: 60, ideal: 100)
     .customizationID("missing")
     TableColumn("Fixed Copy", value: \.copy) { row in
       switch row.copy {
@@ -184,14 +195,23 @@ struct SetsTable: View {
     .customizationID("size")
     .defaultVisibility(.hidden)
     TableColumn("Project Created", value: \.projectCreated) { row in Text(SetsTable.date(row.projectCreated)) }
-      .width(min: 80, ideal: 100)
+      .width(min: 120, ideal: 170)
       .customizationID("created")
     TableColumn("Modified", value: \.modified) { row in Text(SetsTable.date(row.modified)) }
-      .width(min: 80, ideal: 100)
+      .width(min: 120, ideal: 170)
       .customizationID("modified")
   }
 
+  /// As Finder writes it: "Today at 3:30 pm", "23 Nov 2026 at 3:05 pm".
+  private static let dateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .medium
+    f.timeStyle = .short
+    f.doesRelativeDateFormatting = true
+    return f
+  }()
+
   private static func date(_ date: Date) -> String {
-    date == .distantPast ? "" : date.formatted(date: .abbreviated, time: .omitted)
+    date == .distantPast ? "" : dateFormatter.string(from: date)
   }
 }

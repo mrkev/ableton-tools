@@ -36,13 +36,77 @@ struct StuckPlugin: Hashable {
 }
 
 /// What's installed, in every format, and which builds are native.
+/// The most capable code an installed plugin bundle has.
+enum PluginArchitecture: Int, Comparable, Sendable {
+  /// arm64: a native Live loads it.
+  case native
+  /// x86-64 only: a Live running under Rosetta loads it.
+  case x86_64
+  /// Neither: in practice 32-bit, which no Mac runs since Catalina, Rosetta
+  /// included, and which no 64-bit Live (10 and later) could load anyway.
+  case bit32
+
+  static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+
+  init(_ architectures: [NSNumber]?) {
+    let archs = Set((architectures ?? []).map(\.intValue))
+    if archs.contains(NSBundleExecutableArchitectureARM64) {
+      self = .native
+    } else if archs.contains(NSBundleExecutableArchitectureX86_64) {
+      self = .x86_64
+    } else {
+      self = .bit32
+    }
+  }
+
+  init(bundle: URL) { self.init(Bundle(url: bundle)?.executableArchitectures) }
+
+  /// For a plugin's stuck reason: "Intel only", "32-bit only".
+  var only: String { self == .bit32 ? "32-bit only" : "Intel only" }
+}
+
+/// What a set needs to load fully, as saved: the least capable plugin decides.
+/// Only Native and x86-64 sets load anywhere.
+enum SetKind: Int, Comparable {
+  case native, x86_64, bit32, notInstalled
+
+  static func < (a: SetKind, b: SetKind) -> Bool { a.rawValue < b.rawValue }
+
+  init(_ architecture: PluginArchitecture?) {
+    switch architecture {
+    case .native?: self = .native
+    case .x86_64?: self = .x86_64
+    case .bit32?: self = .bit32
+    case nil: self = .notInstalled
+    }
+  }
+
+  var title: String {
+    switch self {
+    case .native: return "Native"
+    case .x86_64: return "x86-64"
+    case .bit32: return "32-bit"
+    case .notInstalled: return "Not Installed"
+    }
+  }
+
+  var explanation: String {
+    switch self {
+    case .native: return "Every plugin has an Apple Silicon build."
+    case .x86_64: return "Some plugins are Intel only: Live loads them running under Rosetta."
+    case .bit32: return "Some plugins are 32-bit only, which no current Mac or Live can load."
+    case .notInstalled: return "Some plugins aren't installed."
+    }
+  }
+}
+
 struct PluginInventory {
   /// Loadable in this (native) process.
   var vst3: [Vst3PluginInfo]
-  /// Installed VST3 bundles, by normalized name, and whether each is native.
-  var vst3Bundles: [String: Bool]
-  /// Installed VST2 bundles, by lowercased file name, and whether each is native.
-  var vst2Files: [String: Bool]
+  /// Installed VST3 bundles, by normalized name.
+  var vst3Bundles: [String: PluginArchitecture]
+  /// Installed VST2 bundles, by lowercased file name.
+  var vst2Files: [String: PluginArchitecture]
   var audioUnits: [AudioUnitInfo]
   /// Opted-in replacements of plugins by different ones.
   var substitutions: Set<Substitution> = []
@@ -60,22 +124,22 @@ struct PluginInventory {
   }
 
   /// Doesn't load plugin code except for `vst3`, which needs the main thread.
-  static func vst2Bundles() -> [String: Bool] {
-    var out: [String: Bool] = [:]
+  static func vst2Bundles() -> [String: PluginArchitecture] {
+    var out: [String: PluginArchitecture] = [:]
     let home = FileManager.default.homeDirectoryForCurrentUser
     for dir in [URL(fileURLWithPath: "/Library/Audio/Plug-Ins/VST"),
                 home.appendingPathComponent("Library/Audio/Plug-Ins/VST")] {
       for url in bundles(in: dir, withExtension: "vst") {
-        out[url.lastPathComponent.lowercased()] = isNative(url)
+        out[url.lastPathComponent.lowercased()] = PluginArchitecture(bundle: url)
       }
     }
     return out
   }
 
-  static func vst3BundleArchitectures() -> [String: Bool] {
-    var out: [String: Bool] = [:]
+  static func vst3BundleArchitectures() -> [String: PluginArchitecture] {
+    var out: [String: PluginArchitecture] = [:]
     for url in Vst3Catalog.bundles() {
-      out[normalized(url.deletingPathExtension().lastPathComponent)] = isNative(url)
+      out[normalized(url.deletingPathExtension().lastPathComponent)] = PluginArchitecture(bundle: url)
     }
     return out
   }
@@ -98,11 +162,6 @@ struct PluginInventory {
     return out
   }
 
-  private static func isNative(_ bundle: URL) -> Bool {
-    Bundle(url: bundle)?.executableArchitectures?
-      .contains(NSNumber(value: NSBundleExecutableArchitectureARM64)) == true
-  }
-
   private static func normalized(_ s: String) -> String {
     String(s.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains))
   }
@@ -110,22 +169,36 @@ struct PluginInventory {
   // MARK: Single plugins
 
   /// `nil` when no VST2 build of it is installed.
-  private func vst2IsNative(_ plugin: LiveSetScan.Vst2Plugin) -> Bool? {
-    if let file = plugin.fileName?.lowercased(), let native = vst2Files[file] { return native }
+  private func architecture(_ plugin: LiveSetScan.Vst2Plugin) -> PluginArchitecture? {
+    if let file = plugin.fileName?.lowercased(), let found = vst2Files[file] { return found }
     return vst2Files[plugin.name.lowercased() + ".vst"]
   }
 
-  func isNative(_ plugin: LiveSetScan.Vst2Plugin) -> Bool { vst2IsNative(plugin) == true }
+  /// `nil` when no VST3 bundle of that name is installed.
+  private func architecture(_ plugin: LiveSetScan.Vst3Plugin) -> PluginArchitecture? {
+    vst3Bundles[Self.normalized(plugin.name)]
+  }
+
+  /// The best build among the Audio Units with its codes; `nil` when none is installed.
+  private func architecture(_ plugin: LiveSetScan.AuPlugin) -> PluginArchitecture? {
+    audioUnits.filter {
+      Int32(bitPattern: $0.typeCode) == plugin.type && Int32(bitPattern: $0.subTypeCode) == plugin.subType
+        && Int32(bitPattern: $0.manufacturerCode) == plugin.manufacturer
+    }
+    .map(\.architecture).min()
+  }
+
+  func isNative(_ plugin: LiveSetScan.Vst2Plugin) -> Bool { architecture(plugin) == .native }
 
   func load(_ plugin: LiveSetScan.Vst2Plugin) -> PluginLoad {
-    let vst2 = vst2IsNative(plugin)
-    if vst2 == true { return .native }
+    let vst2 = architecture(plugin)
+    if vst2 == .native { return .native }
     if let (s, target) = substitution(for: .vst, where: { $0.matches(plugin) }) { return .substitute(s, target) }
     switch Vst3Availability.resolve(plugin, catalog: vst3) {
     case .available(let target):
       return .needsConversion(target)
     case .unavailable(let why):
-      var parts = [vst2 == nil ? "not installed" : "Intel only"]
+      var parts = [vst2?.only ?? "not installed"]
       // Only worth saying when a VST3 exists but can't be used.
       if why != Vst3Availability.noVst3 { parts.append(why) }
       let lowered = plugin.name.lowercased()
@@ -139,24 +212,21 @@ struct PluginInventory {
   func load(_ plugin: LiveSetScan.Vst3Plugin) -> PluginLoad {
     if plugin.uid.count == 4, vst3.contains(where: { $0.uidFields == plugin.uid }) { return .native }
     if let (s, target) = substitution(for: .vst3, where: { $0.matches(plugin) }) { return .substitute(s, target) }
-    switch vst3Bundles[Self.normalized(plugin.name)] {
-    case true?: return .stuck(reason: "installed VST3 is a different plugin ID")
-    case false?: return .stuck(reason: "VST3 is Intel only")
+    switch architecture(plugin) {
+    case .native?: return .stuck(reason: "installed VST3 is a different plugin ID")
+    case let other?: return .stuck(reason: "VST3 is \(other.only)")
     case nil: return .stuck(reason: "VST3 not installed")
     }
   }
 
   func load(_ plugin: LiveSetScan.AuPlugin) -> PluginLoad {
-    let matches = audioUnits.filter {
-      Int32(bitPattern: $0.typeCode) == plugin.type && Int32(bitPattern: $0.subTypeCode) == plugin.subType
-        && Int32(bitPattern: $0.manufacturerCode) == plugin.manufacturer
-    }
-    if matches.contains(where: \.isNative) { return .native }
+    let installed = architecture(plugin)
+    if installed == .native { return .native }
     if let (s, target) = substitution(for: .au, where: { $0.matches(plugin) }) { return .substitute(s, target) }
     if case .available(let target)? = Vst3Availability.resolve(plugin, catalog: vst3) {
       return .needsConversion(target)
     }
-    return .stuck(reason: matches.isEmpty ? "AU not installed" : "AU is Intel only")
+    return .stuck(reason: installed.map { "AU is \($0.only)" } ?? "AU not installed")
   }
 
   /// How a device in an open set loads; `nil` for Live's own devices.
@@ -184,6 +254,25 @@ struct PluginInventory {
     scan.vst2.map { ($0.name, load($0)) } + scan.vst3.map { ($0.name, load($0)) }
       + scan.au.map { ($0.name, load($0)) }
   }
+
+  /// Which Live a set's plugins load in as saved, before any fixing: the least
+  /// capable build among them decides.
+  func kind(of scan: LiveSetScan) -> SetKind {
+    let builds = scan.vst2.map(build) + scan.vst3.map(build) + scan.au.map(build)
+    return builds.max() ?? .native
+  }
+
+  /// The best build installed in the device's own format.
+  private func build(_ plugin: LiveSetScan.Vst2Plugin) -> SetKind { SetKind(architecture(plugin)) }
+
+  private func build(_ plugin: LiveSetScan.Vst3Plugin) -> SetKind {
+    if load(plugin) == .native { return .native }
+    // A native bundle that didn't match has a different plugin ID: it won't load anywhere.
+    let found = architecture(plugin)
+    return found == .native ? .notInstalled : SetKind(found)
+  }
+
+  private func build(_ plugin: LiveSetScan.AuPlugin) -> SetKind { SetKind(architecture(plugin)) }
 
   func stuckPlugins(in scan: LiveSetScan) -> [StuckPlugin] {
     loads(in: scan).compactMap { name, load in

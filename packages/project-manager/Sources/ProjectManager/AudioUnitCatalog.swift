@@ -9,8 +9,9 @@ struct AudioUnitInfo: Identifiable, Hashable, Codable {
   let typeCode: OSType
   let subTypeCode: OSType
   let manufacturerCode: OSType
+  var architecture = PluginArchitecture.native
   /// Has an arm64 build, so a native Live can load it.
-  var isNative = true
+  var isNative: Bool { architecture == .native }
 
   private enum CodingKeys: String, CodingKey {
     case name, manufacturer, typeCode, subTypeCode, manufacturerCode
@@ -43,7 +44,7 @@ enum AudioUnitCatalog {
           typeCode: d.componentType,
           subTypeCode: d.componentSubType,
           manufacturerCode: d.componentManufacturer,
-          isNative: c.availableArchitectures.contains(NSNumber(value: NSBundleExecutableArchitectureARM64)))
+          architecture: PluginArchitecture(c.availableArchitectures))
       }
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
   }

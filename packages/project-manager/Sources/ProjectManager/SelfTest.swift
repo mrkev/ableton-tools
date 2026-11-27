@@ -19,6 +19,7 @@ enum SelfTest {
     print("\(url.path): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
 
     var counts: [SetStatus.Kind: Int] = [:]
+    var kinds: [SetKind: Int] = [:]
     var stuckSets: [String: Set<URL>] = [:]
     var reasons: [String: String] = [:]
     var mismatches = 0, unreadable = 0
@@ -38,6 +39,7 @@ enum SelfTest {
         let status = SetStatus.resolve(
           scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory)
         counts[status.kind, default: 0] += 1
+        kinds[inventory.kind(of: scan), default: 0] += 1
         let missing = locations.missing(in: scan, setURL: set.url, index: index)
         let real = missing.filter { !$0.isFreeze }
         if !real.isEmpty { setsMissing += 1 }
@@ -86,6 +88,7 @@ enum SelfTest {
         print("  ✗ \(set.url.lastPathComponent): \(error)")
       }
     }
+    print("  Kind: " + [SetKind.native, .x86_64, .bit32, .notInstalled].map { "\($0.title) \(kinds[$0] ?? 0)" }.joined(separator: ", "))
     for kind in SetStatus.Kind.allCases where counts[kind] != nil {
       print("  \(kind.title): \(counts[kind]!)")
     }
