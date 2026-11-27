@@ -7,6 +7,7 @@ struct SetPluginsTab: View {
   @EnvironmentObject var model: SetModel
   @State private var choosingAU: AUChoice?
   @State private var selection = Set<Device.ID>()
+  @StoredColumns<PluginDeviceRow>("setPluginsTableColumns") private var columns
   @State private var sortOrder = [KeyPathComparator(\PluginDeviceRow.rank)]
 
   var body: some View {
@@ -67,7 +68,7 @@ struct SetPluginsTab: View {
   }
 
   private var table: some View {
-    Table(rows, selection: $selection, sortOrder: $sortOrder) {
+    Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
       TableColumn("Plugin", value: \.name) { row in
         HStack(spacing: 6) {
           Image(systemName: row.now.icon).foregroundStyle(row.now.tint).frame(width: 16)
@@ -76,12 +77,16 @@ struct SetPluginsTab: View {
         }
       }
       .width(min: 120, ideal: 170)
+      .customizationID("plugin")
+      .disabledCustomizationBehavior(.visibility)
       TableColumn("Format", value: \.format) { row in
         if !row.format.isEmpty { FormatBadge(text: row.format) }
       }
       .width(min: 44, ideal: 54)
+      .customizationID("format")
       TableColumn("Track", value: \.track) { row in Text(row.track).lineLimit(1) }
         .width(min: 80, ideal: 140)
+        .customizationID("track")
       TableColumn("Device", value: \.deviceName) { row in
         HStack(spacing: 6) {
           Text(row.deviceName).foregroundStyle(.secondary).lineLimit(1)
@@ -90,11 +95,13 @@ struct SetPluginsTab: View {
         .help(row.device.enabled ? row.device.name : "\(row.device.name) (switched off)")
       }
       .width(min: 60, ideal: 110)
+      .customizationID("device")
       TableColumn("Loads Now", value: \.nowRank) { row in
         Text(row.now.title).foregroundStyle(row.now.tint == .green ? .primary : row.now.tint).lineLimit(1)
           .help(row.now.detail ?? row.now.title)
       }
       .width(min: 80, ideal: 100)
+      .customizationID("loadsnow")
       TableColumn("When Fixed", value: \.fix.title) { row in
         Menu {
           PluginActionItems(devices: [row.device], choosingAU: $choosingAU)
@@ -107,6 +114,7 @@ struct SetPluginsTab: View {
         .disabled(catalogs.isLoadingAudioUnits || catalogs.isHostingPlugins)
       }
       .width(min: 140, ideal: 220)
+      .customizationID("whenfixed")
     }
     .contextMenu(forSelectionType: Device.ID.self) { ids in
       let chosen = model.devices.filter { ids.contains($0.id) }

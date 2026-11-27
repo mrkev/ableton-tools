@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Every plugin in the library: what it needs, and which sets use it.
+/// Every plugin in the library: what it needs, and how many sets use it.
+/// Double-click a plugin for the sets that use it, in a HUD.
 struct PluginsPage: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
   @State private var filter = Filter.all
   @State private var sortOrder = [KeyPathComparator(\PluginUsage.setCount, order: .reverse)]
-  @State private var selection: PluginUsage.ID?
+  @State private var selection = Set<PluginUsage.ID>()
+  @StoredColumns<PluginUsage>("pluginsTableColumns") private var columns
 
   enum Filter: String, CaseIterable, Identifiable {
     case all = "All"
@@ -48,14 +50,14 @@ struct PluginsPage: View {
       if catalogs.isLoading || (app.plugins.isEmpty && app.isScanning) {
         ProgressView("Looking at installed plugins…").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
-          TableColumn("Plugin", value: \.name) { p in
-            HStack(spacing: 6) {
-              FormatBadge(text: p.formatName)
-              Text(p.name).lineLimit(1)
-            }
-          }
-          .width(min: 140, ideal: 190)
+        Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+          TableColumn("Plugin", value: \.name) { p in Text(p.name).lineLimit(1) }
+            .width(min: 140, ideal: 190)
+            .customizationID("plugin")
+            .disabledCustomizationBehavior(.visibility)
+          TableColumn("Format", value: \.formatName) { p in FormatBadge(text: p.formatName) }
+            .width(min: 44, ideal: 54)
+            .customizationID("format")
           TableColumn("Status", value: \.verdictRank) { p in
             HStack(spacing: 6) {
               Image(systemName: p.verdict.icon).foregroundStyle(p.verdict.tint).frame(width: 16)
@@ -67,20 +69,34 @@ struct PluginsPage: View {
             .help([p.verdict.title, p.verdict.detail].compactMap { $0 }.joined(separator: ": "))
           }
           .width(min: 160, ideal: 280)
+          .customizationID("status")
           TableColumn("Sets", value: \.setCount) { p in Text("\(p.setCount)").monospacedDigit() }
             .width(min: 40, ideal: 50)
+            .customizationID("sets")
           TableColumn("Uses", value: \.instances) { p in
             Text("\(p.instances)").monospacedDigit().foregroundStyle(.secondary)
           }
           .width(min: 40, ideal: 50)
+          .customizationID("uses")
         }
-        .inspector(isPresented: Binding(get: { selection != nil }, set: { if !$0 { selection = nil } })) {
-          if let usage = app.plugins.first(where: { $0.id == selection }) {
-            PluginInspector(usage: usage)
-              .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+        .contextMenu(forSelectionType: PluginUsage.ID.self) { ids in
+          if ids.count == 1, let id = ids.first {
+            Button("Show Details") { showDetails(id) }
           }
+        } primaryAction: { ids in
+          if let id = ids.first { showDetails(id) }
         }
       }
+    }
+    .onDisappear { HUDPanel.shared.close() }
+  }
+
+  private func showDetails(_ id: PluginUsage.ID) {
+    guard let usage = app.plugins.first(where: { $0.id == id }) else { return }
+    HUDPanel.shared.show(title: usage.name) {
+      PluginDetails(id: id)
+        .environmentObject(app)
+        .environmentObject(catalogs)
     }
   }
 
@@ -111,13 +127,22 @@ extension PluginVerdict {
   }
 }
 
-/// One plugin: what to do about it, and the sets that use it.
-private struct PluginInspector: View {
+/// One plugin, in a HUD: what to do about it, and the sets that use it. Looked
+/// up by id, so it follows the library as it changes (an opt-in, a rescan).
+private struct PluginDetails: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
-  let usage: PluginUsage
+  let id: PluginUsage.ID
 
   var body: some View {
+    if let usage = app.plugins.first(where: { $0.id == id }) {
+      details(usage)
+    } else {
+      Text("This plugin is no longer in the library.").foregroundStyle(.secondary).padding(16)
+    }
+  }
+
+  private func details(_ usage: PluginUsage) -> some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
         VStack(alignment: .leading, spacing: 6) {

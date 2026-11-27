@@ -140,3 +140,23 @@ struct FlowLayout: Layout {
     return rows.filter { !$0.indices.isEmpty }
   }
 }
+
+/// A table's column layout (which columns show, their order and widths),
+/// remembered under `key`. Bind it with `columnCustomization: $columns`, and give
+/// each column a `customizationID`; the header's context menu then shows and
+/// hides them.
+@propertyWrapper
+struct StoredColumns<Row: Identifiable>: DynamicProperty {
+  @AppStorage private var data: Data
+
+  init(_ key: String) { _data = AppStorage(wrappedValue: Data(), key) }
+
+  var wrappedValue: TableColumnCustomization<Row> {
+    get { (try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: data)) ?? .init() }
+    nonmutating set { data = (try? JSONEncoder().encode(newValue)) ?? Data() }
+  }
+
+  var projectedValue: Binding<TableColumnCustomization<Row>> {
+    Binding { wrappedValue } set: { wrappedValue = $0 }
+  }
+}

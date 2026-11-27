@@ -7,6 +7,7 @@ struct SetSamplesTab: View {
   let url: URL
   @State private var sortOrder = [KeyPathComparator(\SampleFile.state)]
   @State private var selection = Set<SampleFile.ID>()
+  @StoredColumns<SampleFile>("samplesTableColumns") private var columns
 
   var body: some View {
     if let files = app.samples[url] {
@@ -30,28 +31,34 @@ struct SetSamplesTab: View {
   }
 
   private func table(_ files: [SampleFile]) -> some View {
-    Table(files.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder) {
+    Table(files.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
       TableColumn("Name", value: \.fileName) { file in Text(file.fileName).lineLimit(1) }
         .width(min: 140, ideal: 240)
+        .customizationID("name")
+        .disabledCustomizationBehavior(.visibility)
       TableColumn("Status", value: \.state) { file in
         Label(file.state.title, systemImage: file.state.icon)
           .foregroundStyle(file.state.tint)
           .lineLimit(1)
       }
       .width(min: 90, ideal: 120)
+      .customizationID("status")
       TableColumn("Location", value: \.location) { file in Text(file.location).lineLimit(1) }
         .width(min: 80, ideal: 120)
+        .customizationID("location")
       TableColumn("Size", value: \.size) { file in
         Text(file.size > 0 ? ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) : "")
           .monospacedDigit()
       }
       .width(min: 50, ideal: 70)
+      .customizationID("size")
       TableColumn("Path", value: \.path) { file in
         Text(file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
           .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
           .help(file.path)
       }
       .width(min: 160, ideal: 360)
+      .customizationID("path")
     }
     .contextMenu(forSelectionType: SampleFile.ID.self) { ids in
       let chosen = files.filter { ids.contains($0.id) }

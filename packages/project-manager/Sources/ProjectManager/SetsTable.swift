@@ -72,26 +72,18 @@ struct SetsTable: View {
   let spansProjects: Bool
   /// Which columns are shown, and how wide, remembered separately for tables
   /// that span projects and those that don't.
-  @AppStorage private var storedColumns: Data
+  @StoredColumns<SetTableRow> private var columns: TableColumnCustomization<SetTableRow>
   @State private var sortOrder = [KeyPathComparator(\SetTableRow.modified, order: .reverse)]
   @State private var selection = Set<URL>()
 
   init(rows: [SetTableRow], spansProjects: Bool) {
     self.rows = rows
     self.spansProjects = spansProjects
-    _storedColumns = AppStorage(wrappedValue: Data(), spansProjects ? "libraryTableColumns" : "projectTableColumns")
-  }
-
-  private var columns: Binding<TableColumnCustomization<SetTableRow>> {
-    Binding {
-      (try? JSONDecoder().decode(TableColumnCustomization<SetTableRow>.self, from: storedColumns)) ?? .init()
-    } set: {
-      storedColumns = (try? JSONEncoder().encode($0)) ?? Data()
-    }
+    _columns = StoredColumns(spansProjects ? "libraryTableColumns" : "projectTableColumns")
   }
 
   var body: some View {
-    Table(rows.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder, columnCustomization: columns) {
+    Table(rows.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
       identity
       music
       files

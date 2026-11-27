@@ -41,8 +41,9 @@ row to open its page. A set's **kind** is what its least capable plugin needs as
 saved: **Native** (Apple Silicon), **x86-64** (Live under Rosetta), **32-bit** (no
 current Mac runs it, Rosetta included) or **Not Installed**. **Plugins**
 lists every plugin in the library with what it needs (works natively, converts to
-its VST3, can be replaced, or won't load), how many sets use it, and in its inspector
-which sets those are.
+its VST3, can be replaced, or won't load), how many sets use it; double-click one for
+which sets those are, in a HUD panel. Every table's columns can be shown or hidden
+from its header's context menu.
 
 Statuses come from a fast byte scan of each set, cached by file date and size;
 File › Rescan picks up changes.
@@ -167,7 +168,7 @@ worker continues. Save As for a single set still hosts plugins in the app.
 
 Some Intel-only plugins have no native build, but a different plugin does the same
 job. Replacing them is opt-in, because the result doesn't sound identical: a
-checkbox per replacement in Settings (or a plugin's inspector on the Plugins
+checkbox per replacement in Settings (or a plugin's HUD on the Plugins
 page), a flag on `--batch` and `--vst3`, or "Replace with …" for one set's plugin. Each lives in
 `Substitution.swift` plus its own file; AU devices are rewritten in place
 (`AuRetarget`). An AU → AU replacement also works in sets saved before Live 10.
