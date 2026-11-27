@@ -22,12 +22,6 @@ struct PluginGroup: Identifiable {
   let format: DeviceFormat
   var devices: [Device]
 
-  /// Track names, once each, in set order.
-  var tracks: [String] {
-    var seen = Set<String>()
-    return devices.map(\.trackName).filter { seen.insert($0).inserted }
-  }
-
   /// Devices of the same plugin share a name, format and plugin id.
   static func key(for device: Device) -> String {
     let identity = device.uniqueId ?? device.vst3Uid.map { $0.map(String.init).joined(separator: ",") }
@@ -149,8 +143,6 @@ final class SetModel: ObservableObject {
   }
 
   func action(for device: Device) -> SlotAction { actions[device.id] ?? recommendedAction(for: device) }
-
-  func action(for group: PluginGroup) -> SlotAction { group.devices.first.map(action(for:)) ?? .keep }
 
   func setAction(_ action: SlotAction, for group: PluginGroup) { setAction(action, for: group.devices) }
 

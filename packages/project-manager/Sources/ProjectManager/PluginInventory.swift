@@ -188,8 +188,6 @@ struct PluginInventory {
     .map(\.architecture).min()
   }
 
-  func isNative(_ plugin: LiveSetScan.Vst2Plugin) -> Bool { architecture(plugin) == .native }
-
   func load(_ plugin: LiveSetScan.Vst2Plugin) -> PluginLoad {
     let vst2 = architecture(plugin)
     if vst2 == .native { return .native }

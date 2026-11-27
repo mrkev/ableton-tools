@@ -49,17 +49,22 @@ File › Rescan picks up changes.
 
 ### A set's page
 
-- **Verdict**: whether it opens in the newest installed Live, and why not.
-- **Plugins**: one row per plugin, with the tracks using it and what fixing does to
-  it. The recommendation is only what it needs to load: an Intel-only VST2 or AU
-  becomes its VST3, and a plugin with a replacement turned on in Settings is
-  replaced. The ⋯ menu overrides that for this set: leave it, move a native VST2 to
-  its VST3, use a replacement that's off by default, or pick an Audio Unit (which
-  starts from its default settings).
+- **Verdict**: whether it opens natively in the newest installed Live, and why not.
+  Left out when it does and the set was saved by that Live's major version.
+- **Plugins** tab: one row per plugin device, with its track, its own name (and
+  whether it's off), how it loads now and what fixing does to it. The
+  recommendation is only what it needs to load: an Intel-only VST2 or AU becomes
+  its VST3, and a plugin with a replacement turned on in Settings is replaced. A
+  row's When Fixed menu overrides that for the device: leave it, move a native VST2
+  to its VST3, use a replacement that's off by default, or pick an Audio Unit
+  (which starts from its default settings). Right-click several rows of a plugin to
+  choose for all of them.
 - **Fix and Save Copy…** saves the fixed set as a new file beside the original,
   which is never changed. Only the chosen devices are replaced; everything else
   keeps its values, though unchanged XML isn't guaranteed byte-identical.
-- **Samples**: files the set refers to that aren't where it expects. They're looked
+- **Samples** tab: every file the set refers to, whether it was found and where
+  (the project, Core Library, a pack, User Library, Places), its size and path, with
+  a summary of what's missing above. They're looked
   for where Live would: the recorded path, relative to the project, and Live's Core
   Library, packs and User Library (from Live's `Library.cfg`), including library
   paths written by older Live versions. Older sets keep the absolute path in a Mac
@@ -73,7 +78,7 @@ opens by default in the oldest installed Live that can open it, so it stays in t
 version that saved it rather than being upgraded; Live refuses sets from a newer
 major or minor release, so older Lives aren't offered. When a later Live is
 installed, the Open button's menu (and the context menus, and File › Open In)
-offers it. Open and Show in Finder are in the toolbar and the File menu. Settings
+offers it. Open and Show in Finder are in the set's header and the File menu. Settings
 holds the replacements' defaults.
 
 To fix many sets at once, use File › Fix Sets in Bulk… (for what's selected in the

@@ -126,7 +126,9 @@ enum SelfTest {
     }
     for group in model.groups {
       let load = model.load(of: group.devices[0]).map { "\($0)" } ?? "-"
-      let action = model.action(for: group)
+      // Choices are per device; a plugin's devices usually share one.
+      let actions = Set(group.devices.map { String(describing: model.action(for: $0)) })
+      let action = actions.count == 1 ? actions.first! : "mixed: \(actions.sorted())"
       print("  \(model.willLoad(group) ? "✓" : "✗") \(group.format.rawValue) \(group.name) ×\(group.devices.count): "
         + "\(load.prefix(60)) → \(String(describing: action).prefix(80))")
     }

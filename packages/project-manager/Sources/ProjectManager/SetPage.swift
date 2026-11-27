@@ -90,7 +90,7 @@ private struct SetHeader: View {
       }
       Spacer(minLength: 12)
       HStack {
-        OpenInLiveButton(url: url, showsIcon: false)
+        OpenInLiveButton(url: url)
           .fixedSize()
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
       }
@@ -300,7 +300,7 @@ private struct CopyCard: View {
         }
         Spacer()
         Button("View") { app.reveal(copy) }
-        OpenInLiveButton(url: copy, showsIcon: false)
+        OpenInLiveButton(url: copy)
           .fixedSize()
       }
       .padding(12)

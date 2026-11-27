@@ -151,20 +151,18 @@ struct OpenChoices {
 struct OpenInLiveButton: View {
   @EnvironmentObject var app: AppModel
   let url: URL
-  /// Toolbars show only a label's icon, which wouldn't say which Live.
-  var showsIcon = true
 
   var body: some View {
     let choices = OpenChoices(url: url, app: app)
     Group {
       if choices.later.isEmpty {
-        Button { choices.open() } label: { label(choices) }
+        Button(choices.title) { choices.open() }
           .disabled(choices.tooNew)
       } else {
         Menu {
           OpenInLiveItems(choices: choices, includePreferred: false)
         } label: {
-          label(choices)
+          Text(choices.title)
         } primaryAction: {
           choices.open()
         }
@@ -172,10 +170,6 @@ struct OpenInLiveButton: View {
       }
     }
     .help(choices.help)
-  }
-
-  @ViewBuilder private func label(_ choices: OpenChoices) -> some View {
-    if showsIcon { Label(choices.title, systemImage: "play.circle") } else { Text(choices.title) }
   }
 }
 
