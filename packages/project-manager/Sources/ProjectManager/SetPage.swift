@@ -45,6 +45,7 @@ struct SetPageView: View {
         }
       }
       .tabViewStyle(.grouped)
+      .padding([.horizontal, .bottom], 24)
 
       // Holds the header at the top until the tabs fill the rest.
       Spacer(minLength: 0)
