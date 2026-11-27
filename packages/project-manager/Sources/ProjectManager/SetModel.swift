@@ -152,17 +152,22 @@ final class SetModel: ObservableObject {
 
   func action(for group: PluginGroup) -> SlotAction { group.devices.first.map(action(for:)) ?? .keep }
 
-  func setAction(_ action: SlotAction, for group: PluginGroup) {
-    for device in group.devices {
+  func setAction(_ action: SlotAction, for group: PluginGroup) { setAction(action, for: group.devices) }
+
+  /// Choices are per device: one instance of a plugin can be fixed differently.
+  func setAction(_ action: SlotAction, for devices: [Device]) {
+    for device in devices {
       if action == recommendedAction(for: device) { actions[device.id] = nil } else { actions[device.id] = action }
     }
   }
 
   func resetChoices() { actions = [:] }
 
-  /// Will this plugin load once the set is fixed?
-  func willLoad(_ group: PluginGroup) -> Bool {
-    guard let device = group.devices.first else { return true }
+  /// Will every instance of this plugin load once the set is fixed?
+  func willLoad(_ group: PluginGroup) -> Bool { group.devices.allSatisfy(willLoad) }
+
+  /// Will this device load once the set is fixed?
+  func willLoad(_ device: Device) -> Bool {
     switch action(for: device) {
     case .keep:
       if case .stuck? = load(of: device) { return false }
@@ -174,8 +179,8 @@ final class SetModel: ObservableObject {
     }
   }
 
-  /// Groups fixing changes.
-  var changingGroups: [PluginGroup] { groups.filter { action(for: $0) != .keep } }
+  /// Groups fixing changes, in any of their devices.
+  var changingGroups: [PluginGroup] { groups.filter { $0.devices.contains { action(for: $0) != .keep } } }
   /// Groups that won't load after fixing.
   var brokenGroups: [PluginGroup] { groups.filter { !willLoad($0) } }
 

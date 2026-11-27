@@ -31,17 +31,17 @@ struct SetPageView: View {
       .layoutPriority(1)
 
       TabView(selection: $tab) {
-        Tab(pluginsTitle, systemImage: "1.circle", value: SetPageTab.plugins) {
-            ScrollView {
-              PluginsTab()
-                .padding(8)
-                .frame(maxWidth: 920, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        Tab(value: SetPageTab.plugins) {
+          PluginsTab()
+            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+        } label: {
+          Text(pluginsTitle)
         }
-        Tab(samplesTitle, image: "cats24x24", value: SetPageTab.samples) {
-            SamplesTab(url: model.url)
-              .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+        Tab(value: SetPageTab.samples) {
+          SamplesTab(url: model.url)
+            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+        } label: {
+          Text(samplesTitle)
         }
       }
       .tabViewStyle(.grouped)

@@ -1,22 +1,16 @@
 import SwiftUI
 
-/// A set page's Plugins tab: each plugin, what fixing does to it, and the notes
-/// from the last fix.
+/// A set page's Plugins tab: every plugin device in the set, how it loads now and
+/// what fixing does to it.
 struct PluginsTab: View {
   @EnvironmentObject var catalogs: PluginCatalogs
   @EnvironmentObject var model: SetModel
-  @State private var choosingFor: PluginGroup?
+  @State private var choosingAU: AUChoice?
+  @State private var selection = Set<Device.ID>()
+  @State private var sortOrder = [KeyPathComparator(\PluginRow.rank)]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      if model.hasChanges {
-        HStack {
-          Spacer()
-          Button("Use Recommended") { model.resetChoices() }
-            .buttonStyle(.link)
-            .help("Undo your choices: fix only what each plugin needs to load")
-        }
-      }
       if model.document == nil {
         if model.loadError == nil {
           ProgressView().controlSize(.small)
@@ -25,20 +19,19 @@ struct PluginsTab: View {
         Text("No third-party plugins. Everything is Live's own devices.")
           .foregroundStyle(.secondary)
       } else {
-        VStack(spacing: 0) {
-          ForEach(Array(sortedGroups.enumerated()), id: \.element.id) { i, group in
-            if i > 0 { Divider() }
-            PluginGroupRow(group: group, choosingFor: $choosingFor)
-              .padding(.vertical, 6).padding(.horizontal, 10)
+        HStack {
+          if model.builtInCount > 0 {
+            Text("Also \(model.builtInCount) of Live's own and Max for Live devices, which load as they are.")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Spacer()
+          if model.hasChanges {
+            Button("Use Recommended") { model.resetChoices() }
+              .buttonStyle(.link)
+              .help("Undo your choices: fix only what each plugin needs to load")
           }
         }
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
-        .disabled(catalogs.isHostingPlugins)
-      }
-      if model.document != nil, model.builtInCount > 0 {
-        Text("Also \(model.builtInCount) of Live's own and Max for Live devices, which load as they are.")
-          .font(.caption).foregroundStyle(.secondary)
+        table
       }
       if !model.report.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
@@ -47,135 +40,191 @@ struct PluginsTab: View {
             Text(line).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
           }
         }
-        .padding(.top, 14)
+        .padding(.top, 6)
       }
     }
-    .sheet(item: $choosingFor) { group in
-      ChooseAUView(device: group.devices[0]) { au in
-        model.setAction(.replaceAU(au), for: group)
-        choosingFor = nil
+    .padding(8)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .sheet(item: $choosingAU) { choice in
+      ChooseAUView(device: choice.devices[0]) { au in
+        model.setAction(.replaceAU(au), for: choice.devices)
+        choosingAU = nil
       } onCancel: {
-        choosingFor = nil
+        choosingAU = nil
       }
     }
   }
 
-  /// Won't load first, then what fixing changes, then what already works.
-  private var sortedGroups: [PluginGroup] {
-    func rank(_ g: PluginGroup) -> Int {
-      if !model.willLoad(g) { return 0 }
-      return model.action(for: g) == .keep ? 2 : 1
+  private var rows: [PluginRow] {
+    var order = 0
+    return model.groups.flatMap { group in
+      group.devices.map { device in
+        defer { order += 1 }
+        return PluginRow(device, in: group, model: model, catalogs: catalogs, order: order)
+      }
     }
-    return model.groups.enumerated()
-      .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
-      .map(\.element)
+    .sorted(using: sortOrder)
+  }
+
+  private var table: some View {
+    Table(rows, selection: $selection, sortOrder: $sortOrder) {
+      TableColumn("Plugin", value: \.name) { row in
+        HStack(spacing: 6) {
+          Image(systemName: row.now.icon).foregroundStyle(row.now.tint).frame(width: 16)
+            .accessibilityLabel(row.now.title)
+          Text(row.name).lineLimit(1)
+        }
+      }
+      .width(min: 120, ideal: 170)
+      TableColumn("Format", value: \.format) { row in
+        if !row.format.isEmpty { FormatBadge(text: row.format) }
+      }
+      .width(min: 44, ideal: 54)
+      TableColumn("Track", value: \.track) { row in Text(row.track).lineLimit(1) }
+        .width(min: 80, ideal: 140)
+      TableColumn("Device", value: \.deviceName) { row in
+        HStack(spacing: 6) {
+          Text(row.deviceName).foregroundStyle(.secondary).lineLimit(1)
+          if !row.device.enabled { Text("off").foregroundStyle(.tertiary) }
+        }
+        .help(row.device.enabled ? row.device.name : "\(row.device.name) (switched off)")
+      }
+      .width(min: 60, ideal: 110)
+      TableColumn("Loads Now", value: \.nowRank) { row in
+        Text(row.now.title).foregroundStyle(row.now.tint == .green ? .primary : row.now.tint).lineLimit(1)
+          .help(row.now.detail ?? row.now.title)
+      }
+      .width(min: 80, ideal: 100)
+      TableColumn("When Fixed", value: \.fix.title) { row in
+        Menu {
+          PluginActionItems(devices: [row.device], choosingAU: $choosingAU)
+        } label: {
+          Label(row.fix.title, systemImage: row.fix.icon)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(row.fix.detail.map { "\(row.fix.title): \($0)" } ?? row.fix.title)
+        .disabled(catalogs.isLoadingAudioUnits || catalogs.isHostingPlugins)
+      }
+      .width(min: 140, ideal: 220)
+    }
+    .contextMenu(forSelectionType: Device.ID.self) { ids in
+      let chosen = model.devices.filter { ids.contains($0.id) }
+      // One plugin's choices fit all its devices; mixed plugins share only these.
+      if let first = chosen.first, chosen.allSatisfy({ PluginGroup.key(for: $0) == PluginGroup.key(for: first) }) {
+        PluginActionItems(devices: chosen, choosingAU: $choosingAU)
+      } else if !chosen.isEmpty {
+        Button("Leave As Is") { model.setAction(.keep, for: chosen) }
+        Button("Use Recommended") {
+          for device in chosen { model.setAction(model.recommendedAction(for: device), for: [device]) }
+        }
+      }
+    }
+    .frame(minHeight: 0, maxHeight: .infinity)
   }
 }
 
-/// One plugin in the set: what happens to it, and the choice of what to do.
-private struct PluginGroupRow: View {
-  @EnvironmentObject var catalogs: PluginCatalogs
-  @EnvironmentObject var model: SetModel
-  let group: PluginGroup
-  @Binding var choosingFor: PluginGroup?
-  @State private var expanded = false
+/// Devices waiting on the Audio Unit picker.
+private struct AUChoice: Identifiable {
+  let id = UUID()
+  let devices: [Device]
+}
 
-  private struct Outcome {
-    var icon: String
-    var tint: Color
-    var title: String
-    var detail: String?
-  }
+// MARK: - Rows
 
-  private var device: Device { group.devices[0] }
+/// What a column says about a device: an icon, a few words, and why.
+struct PluginOutcome {
+  var icon: String
+  var tint: Color
+  var title: String
+  var detail: String?
+}
 
-  private var outcome: Outcome {
-    switch model.action(for: group) {
+/// One plugin device in the set, ready for the table.
+struct PluginRow: Identifiable {
+  let device: Device
+  let name: String
+  let format: String
+  let track: String
+  /// The device's own name, when it was renamed from the plugin's.
+  let deviceName: String
+  /// How it loads in a native Live as the set is.
+  let now: PluginOutcome
+  /// What fixing does to it.
+  let fix: PluginOutcome
+  /// Won't load first, then what fixing changes, then what already works; set
+  /// order within each.
+  let rank: Int
+  let nowRank: Int
+
+  var id: Device.ID { device.id }
+
+  @MainActor init(_ device: Device, in group: PluginGroup, model: SetModel, catalogs: PluginCatalogs, order: Int) {
+    self.device = device
+    name = group.name
+    format = group.format.badge ?? ""
+    track = device.trackName
+    deviceName = device.name == device.product ? "" : device.name
+    let replacement = catalogs.substitution(for: device).map { "can be replaced with \($0.0.targetName)" }
+    switch model.load(of: device) {
+    case .native?, nil:
+      now = PluginOutcome(icon: "checkmark.circle.fill", tint: .green, title: "Natively")
+      nowRank = 1
+    case .stuck(let why)?:
+      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
+                          detail: [why, replacement].compactMap { $0 }.joined(separator: " · "))
+      nowRank = 0
+    case .needsConversion?:
+      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
+                          detail: model.predatesVst3 ? "Intel only · save in Live 10+ to convert" : "Intel only")
+      nowRank = 0
+    case .substitute?:
+      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
+                          detail: ["Intel only", replacement].compactMap { $0 }.joined(separator: " · "))
+      nowRank = 0
+    }
+
+    let action = model.action(for: device)
+    switch action {
     case .keep:
-      let replacement = catalogs.substitution(for: device).map { "can be replaced with \($0.0.targetName)" }
-      switch model.load(of: device) {
-      case .native?, nil:
-        return Outcome(icon: "checkmark.circle.fill", tint: .green, title: "Works natively")
-      case .stuck(let why)?:
-        return Outcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
-                       detail: [why, replacement].compactMap { $0 }.joined(separator: " · "))
-      case .needsConversion?:
-        return Outcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load unless converted",
-                       detail: model.predatesVst3 ? "save in Live 10+ first" : "Intel only")
-      case .substitute?:
-        return Outcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
-                       detail: ["Intel only", replacement].compactMap { $0 }.joined(separator: " · "))
-      }
+      fix = nowRank == 1
+        ? PluginOutcome(icon: "minus.circle", tint: .secondary, title: "Nothing to do")
+        : PluginOutcome(icon: "xmark.octagon", tint: .red, title: "Still won't load", detail: now.detail)
     case .replaceVST3(let target):
       let verb = model.loadsNativelyAsVst2(device) ? "Moves to" : "Becomes"
-      return Outcome(icon: "arrow.right.circle.fill", tint: .blue, title: "\(verb) \(target.name) VST3",
-                     detail: "keeps its settings")
+      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .blue, title: "\(verb) \(target.name) VST3",
+                          detail: "keeps its settings")
     case .substitute(let sub, _):
-      return Outcome(icon: "arrow.triangle.swap", tint: .blue, title: "Replaced with \(sub.targetName)",
-                     detail: sub.outcome)
+      fix = PluginOutcome(icon: "arrow.triangle.swap", tint: .blue, title: "Replaced with \(sub.targetName)",
+                          detail: sub.outcome)
     case .replaceAU(let au):
-      return Outcome(icon: "arrow.right.circle.fill", tint: .orange, title: "Becomes \(au.name) AU",
-                     detail: "starts from its default settings")
+      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .orange, title: "Becomes \(au.name) AU",
+                          detail: "starts from its default settings")
     }
+    let urgency = !model.willLoad(device) ? 0 : action == .keep ? 2 : 1
+    rank = urgency * 100_000 + order
   }
+}
+
+// MARK: - Choosing what fixing does
+
+/// What fixing can do with devices of one plugin: a row's When Fixed menu, or the
+/// context menu for the rows selected.
+private struct PluginActionItems: View {
+  @EnvironmentObject var catalogs: PluginCatalogs
+  @EnvironmentObject var model: SetModel
+  /// Devices of the same plugin.
+  let devices: [Device]
+  @Binding var choosingAU: AUChoice?
+
+  private var device: Device { devices[0] }
 
   var body: some View {
-    let o = outcome
-    DisclosureGroup(isExpanded: $expanded) {
-      VStack(alignment: .leading, spacing: 3) {
-        ForEach(group.devices) { d in
-          HStack(spacing: 6) {
-            Text(d.trackName)
-            if d.name != d.product { Text("› \(d.name)").foregroundStyle(.secondary) }
-            if !d.enabled { Text("off").foregroundStyle(.tertiary) }
-          }
-          .font(.caption)
-        }
-      }
-      .padding(.leading, 30).padding(.top, 2)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    } label: {
-      HStack(spacing: 8) {
-        Image(systemName: o.icon).foregroundStyle(o.tint).frame(width: 16)
-          .accessibilityLabel(o.title)
-        if let badge = group.format.badge { FormatBadge(text: badge) }
-        Text(group.name).lineLimit(1)
-        Text(usage).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        Spacer(minLength: 12)
-        VStack(alignment: .trailing, spacing: 1) {
-          Text(o.title).lineLimit(1)
-          if let detail = o.detail, !detail.isEmpty {
-            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-          }
-        }
-        Menu { menuItems } label: {
-          Image(systemName: "ellipsis.circle")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Choose what fixing does with \(group.name)")
-        .disabled(catalogs.isLoadingAudioUnits)
-      }
-      .contentShape(Rectangle())
-      .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
-    }
-  }
-
-  private var usage: String {
-    let tracks = group.tracks
-    let n = group.devices.count
-    return tracks.count == 1 ? (n == 1 ? tracks[0] : "\(n)× on \(tracks[0])")
-      : "\(n)× on \(tracks.count) tracks"
-  }
-
-  @ViewBuilder private var menuItems: some View {
-    let recommended = model.recommendedAction(for: device)
-    Button("Leave As Is") { model.setAction(.keep, for: group) }
+    Button("Leave As Is") { model.setAction(.keep, for: devices) }
     switch model.vst3Availability(of: device) {
     case .available(let target):
       Button("\(model.loadsNativelyAsVst2(device) ? "Move" : "Convert") to \(target.name) VST3 (keeps settings)") {
-        model.setAction(.replaceVST3(target), for: group)
+        model.setAction(.replaceVST3(target), for: devices)
       }
     case .unavailable(let why):
       Button("VST3: \(why)") {}.disabled(true)
@@ -188,7 +237,7 @@ private struct PluginGroupRow: View {
           Button("\(sub.targetName): save in Live 10+ first") {}.disabled(true)
         } else {
           Button("Replace with \(sub.targetName) (\(sub.outcome.replacingOccurrences(of: " · ", with: ", ")))") {
-            model.setAction(.substitute(sub, target), for: group)
+            model.setAction(.substitute(sub, target), for: devices)
           }
         }
       } else {
@@ -197,13 +246,14 @@ private struct PluginGroupRow: View {
     }
     Divider()
     if let au = model.suggestedAU(for: device) {
-      Button("Use \(au.name) AU (default settings)") { model.setAction(.replaceAU(au), for: group) }
+      Button("Use \(au.name) AU (default settings)") { model.setAction(.replaceAU(au), for: devices) }
     }
-    Button("Choose Audio Unit… (default settings)") { choosingFor = group }
-    if model.action(for: group) != recommended {
+    Button("Choose Audio Unit… (default settings)") { choosingAU = AUChoice(devices: devices) }
+    if devices.contains(where: { model.action(for: $0) != model.recommendedAction(for: $0) }) {
       Divider()
-      Button("Use Recommended") { model.setAction(recommended, for: group) }
+      Button("Use Recommended") {
+        for device in devices { model.setAction(model.recommendedAction(for: device), for: [device]) }
+      }
     }
   }
 }
-
