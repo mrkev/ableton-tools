@@ -2,12 +2,12 @@ import SwiftUI
 
 /// A set page's Plugins tab: every plugin device in the set, how it loads now and
 /// what fixing does to it.
-struct PluginsTab: View {
+struct SetPluginsTab: View {
   @EnvironmentObject var catalogs: PluginCatalogs
   @EnvironmentObject var model: SetModel
   @State private var choosingAU: AUChoice?
   @State private var selection = Set<Device.ID>()
-  @State private var sortOrder = [KeyPathComparator(\PluginRow.rank)]
+  @State private var sortOrder = [KeyPathComparator(\PluginDeviceRow.rank)]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -55,12 +55,12 @@ struct PluginsTab: View {
     }
   }
 
-  private var rows: [PluginRow] {
+  private var rows: [PluginDeviceRow] {
     var order = 0
     return model.groups.flatMap { group in
       group.devices.map { device in
         defer { order += 1 }
-        return PluginRow(device, in: group, model: model, catalogs: catalogs, order: order)
+        return PluginDeviceRow(device, in: group, model: model, catalogs: catalogs, order: order)
       }
     }
     .sorted(using: sortOrder)
@@ -133,7 +133,7 @@ private struct AUChoice: Identifiable {
 // MARK: - Rows
 
 /// What a column says about a device: an icon, a few words, and why.
-struct PluginOutcome {
+private struct PluginOutcome {
   var icon: String
   var tint: Color
   var title: String
@@ -141,7 +141,7 @@ struct PluginOutcome {
 }
 
 /// One plugin device in the set, ready for the table.
-struct PluginRow: Identifiable {
+private struct PluginDeviceRow: Identifiable {
   let device: Device
   let name: String
   let format: String

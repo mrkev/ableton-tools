@@ -2,34 +2,23 @@ import AppKit
 import SwiftUI
 
 /// A set page's Samples tab: what's missing, then every sample and where it is.
-struct SamplesTab: View {
+struct SetSamplesTab: View {
   @EnvironmentObject var app: AppModel
   let url: URL
-  @State private var files: [SampleFile]?
   @State private var sortOrder = [KeyPathComparator(\SampleFile.state)]
   @State private var selection = Set<SampleFile.ID>()
 
   var body: some View {
-    if let scan = app.scan(of: url), let missing = app.missingSamples[url] {
+    if let files = app.samples[url] {
       VStack(alignment: .leading, spacing: 0) {
-        SampleNotices(scan: scan, missing: missing)
+        SampleNotices(files: files)
           .padding(8)
-        if !scan.samples.isEmpty {
-          if let files {
-            table(files)
-              .frame(minHeight: 0, maxHeight: .infinity)
-          } else {
-            ProgressView().controlSize(.small).padding(.horizontal, 8)
-          }
+        if !files.isEmpty {
+          table(files)
+            .frame(minHeight: 0, maxHeight: .infinity)
         }
       }
       // .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      .task(id: missing) {
-        let url = url
-        files = await Task.detached(priority: .userInitiated) {
-          LiveLocations.current().files(in: scan, setURL: url, missing: missing)
-        }.value
-      }
     } else {
       HStack(spacing: 6) {
         ProgressView().controlSize(.small)
@@ -79,17 +68,16 @@ struct SamplesTab: View {
 
 /// What's missing, in words, and what can be done about it.
 private struct SampleNotices: View {
-  let scan: LiveSetScan
-  let missing: [MissingSample]
+  let files: [SampleFile]
 
   var body: some View {
-    let freeze = missing.filter(\.isFreeze).count
-    let lost = missing.filter { !$0.isFreeze && !$0.hasNamesake }.count
-    let moved = missing.filter { !$0.isFreeze && $0.hasNamesake }.count
+    let freeze = files.filter { $0.state == .freeze }.count
+    let lost = files.filter { $0.state == .lost }.count
+    let moved = files.filter { $0.state == .relinkable }.count
     VStack(alignment: .leading, spacing: 6) {
-      if missing.isEmpty {
-        Label(scan.samples.isEmpty ? "It doesn't use any samples."
-              : "All \(scan.samples.count) samples are where the set expects them.",
+      if freeze + lost + moved == 0 {
+        Label(files.isEmpty ? "It doesn't use any samples."
+              : "All \(files.count) samples are where the set expects them.",
               systemImage: "checkmark.circle.fill")
           .foregroundStyle(.secondary)
       }

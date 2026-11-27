@@ -32,13 +32,13 @@ struct SetPageView: View {
 
       TabView(selection: $tab) {
         Tab(value: SetPageTab.plugins) {
-          PluginsTab()
+          SetPluginsTab()
             .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
         } label: {
           Text(pluginsTitle)
         }
         Tab(value: SetPageTab.samples) {
-          SamplesTab(url: model.url)
+          SetSamplesTab(url: model.url)
             .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
         } label: {
           Text(samplesTitle)

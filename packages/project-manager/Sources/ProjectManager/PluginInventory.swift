@@ -67,10 +67,10 @@ enum PluginArchitecture: Int, Comparable, Sendable {
 
 /// What a set needs to load fully, as saved: the least capable plugin decides.
 /// Only Native and x86-64 sets load anywhere.
-enum SetKind: Int, Comparable {
+enum SetArchitecture: Int, Comparable {
   case native, x86_64, bit32, notInstalled
 
-  static func < (a: SetKind, b: SetKind) -> Bool { a.rawValue < b.rawValue }
+  static func < (a: SetArchitecture, b: SetArchitecture) -> Bool { a.rawValue < b.rawValue }
 
   init(_ architecture: PluginArchitecture?) {
     switch architecture {
@@ -255,22 +255,22 @@ struct PluginInventory {
 
   /// Which Live a set's plugins load in as saved, before any fixing: the least
   /// capable build among them decides.
-  func kind(of scan: LiveSetScan) -> SetKind {
+  func architecture(of scan: LiveSetScan) -> SetArchitecture {
     let builds = scan.vst2.map(build) + scan.vst3.map(build) + scan.au.map(build)
     return builds.max() ?? .native
   }
 
   /// The best build installed in the device's own format.
-  private func build(_ plugin: LiveSetScan.Vst2Plugin) -> SetKind { SetKind(architecture(plugin)) }
+  private func build(_ plugin: LiveSetScan.Vst2Plugin) -> SetArchitecture { SetArchitecture(architecture(plugin)) }
 
-  private func build(_ plugin: LiveSetScan.Vst3Plugin) -> SetKind {
+  private func build(_ plugin: LiveSetScan.Vst3Plugin) -> SetArchitecture {
     if load(plugin) == .native { return .native }
     // A native bundle that didn't match has a different plugin ID: it won't load anywhere.
     let found = architecture(plugin)
-    return found == .native ? .notInstalled : SetKind(found)
+    return found == .native ? .notInstalled : SetArchitecture(found)
   }
 
-  private func build(_ plugin: LiveSetScan.AuPlugin) -> SetKind { SetKind(architecture(plugin)) }
+  private func build(_ plugin: LiveSetScan.AuPlugin) -> SetArchitecture { SetArchitecture(architecture(plugin)) }
 
   func stuckPlugins(in scan: LiveSetScan) -> [StuckPlugin] {
     loads(in: scan).compactMap { name, load in

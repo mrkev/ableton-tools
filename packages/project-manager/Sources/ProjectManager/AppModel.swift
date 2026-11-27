@@ -2,71 +2,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Installed plugins, shared by every open set.
-@MainActor
-final class PluginCatalogs: ObservableObject {
-  @Published private(set) var audioUnits: [AudioUnitInfo] = []
-  @Published private(set) var isLoadingAudioUnits = true
-  @Published private(set) var vst3: [Vst3PluginInfo] = []
-  @Published private(set) var isLoadingVst3 = true
-  /// Everything installed, once all of it is known.
-  @Published private(set) var inventory: PluginInventory?
-  /// A save or batch is converting. Only one conversion runs at a time, and the
-  /// UI that could start another is disabled meanwhile.
-  @Published var isHostingPlugins = false
-  /// Opted-in replacements of plugins by different ones. Remembered.
-  @Published var substitutions = Set(Substitution.allCases.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) }) {
-    didSet {
-      for s in Substitution.allCases { UserDefaults.standard.set(substitutions.contains(s), forKey: s.defaultsKey) }
-    }
-  }
-
-  func isOptedIn(_ s: Substitution) -> Binding<Bool> {
-    Binding(get: { self.substitutions.contains(s) }, set: { on in
-      if on { self.substitutions.insert(s) } else { self.substitutions.remove(s) }
-    })
-  }
-
-  var isLoading: Bool { inventory == nil }
-
-  /// `inventory` with the opt-ins applied.
-  var effectiveInventory: PluginInventory? {
-    inventory.map {
-      var out = $0
-      out.substitutions = substitutions
-      return out
-    }
-  }
-
-  /// The replacement installed for a device, opted in or not (a device can be
-  /// replaced on its own).
-  func substitution(for device: Device) -> (Substitution, PluginTarget)? {
-    guard let s = Substitution.matching(device),
-          let target = s.target(for: device.format, vst3: vst3, audioUnits: audioUnits) else { return nil }
-    return (s, target)
-  }
-
-  init() {
-    Task {
-      let others = await Task.detached(priority: .userInitiated) {
-        (AudioUnitCatalog.installed(), PluginInventory.vst2Bundles(), PluginInventory.vst3BundleArchitectures())
-      }.value
-      audioUnits = others.0
-      isLoadingAudioUnits = false
-      // On the main actor (plugins expect their code to load on the main thread),
-      // yielding between bundles so the window stays responsive.
-      var found: [Vst3PluginInfo] = []
-      for bundle in Vst3Catalog.bundles() {
-        found += Vst3Catalog.classes(in: bundle)
-        await Task.yield()
-      }
-      vst3 = found
-      isLoadingVst3 = false
-      inventory = PluginInventory(vst3: found, vst3Bundles: others.2, vst2Files: others.1, audioUnits: others.0)
-    }
-  }
-}
-
 enum SidebarItem: Hashable {
   case overview
   case plugins
@@ -127,8 +62,8 @@ final class AppModel: ObservableObject {
   @Published var searchText = ""
   /// The batch sheet, while it's up.
   @Published var batchRequest: BatchRequest?
-  /// Samples not where the set expects them, by set or copy URL.
-  @Published private(set) var missingSamples: [URL: [MissingSample]] = [:]
+  /// Every sample of each set (and fixed copy), found or not, by URL.
+  @Published private(set) var samples: [URL: [SampleFile]] = [:]
   /// Every plugin in the library's sets.
   @Published private(set) var plugins: [PluginUsage] = []
   /// Bytes on disk, per project folder, once measured.
@@ -193,7 +128,7 @@ final class AppModel: ObservableObject {
     statuses = [:]
     root = url
     projects = found
-    missingSamples = [:]
+    samples = [:]
     plugins = []
     projectSizes = [:]
     selection = [.overview]
@@ -423,19 +358,19 @@ final class AppModel: ObservableObject {
     sampleTask?.cancel()
     let known = scans
     sampleTask = Task { [weak self] in
-      let found = await Task.detached(priority: .utility) { () -> [URL: [MissingSample]] in
+      let found = await Task.detached(priority: .utility) { () -> [URL: [SampleFile]] in
         let locations = LiveLocations.current()
         let index = SampleIndex.build(locations)
-        var out: [URL: [MissingSample]] = [:]
+        var out: [URL: [SampleFile]] = [:]
         for url in urls {
           if Task.isCancelled { break }
           guard let scan = known[url] else { continue }
-          out[url] = locations.missing(in: scan, setURL: url, index: index)
+          out[url] = locations.files(in: scan, setURL: url, index: index)
         }
         return out
       }.value
       guard let self, !Task.isCancelled else { return }
-      self.missingSamples = found
+      self.samples = found
     }
   }
 
@@ -480,14 +415,14 @@ final class AppModel: ObservableObject {
   }
 
   /// Which Live a set loads in as saved; nil until it's scanned.
-  func kind(of url: URL) -> SetKind? {
+  func architecture(of url: URL) -> SetArchitecture? {
     guard let scan = scans[url], let inventory = catalogs.inventory else { return nil }
-    return inventory.kind(of: scan)
+    return inventory.architecture(of: scan)
   }
 
   /// Missing samples that nothing of the same name could stand in for.
   func lostSamples(of url: URL) -> Int {
-    missingSamples[url]?.filter { !$0.isFreeze && !$0.hasNamesake }.count ?? 0
+    samples[url]?.filter { $0.state == .lost }.count ?? 0
   }
 
   func status(of set: LiveSetEntry) -> SetStatus { statuses[set.url] ?? .scanning }

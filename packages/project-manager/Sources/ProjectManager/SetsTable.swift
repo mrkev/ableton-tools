@@ -7,7 +7,8 @@ struct SetTableRow: Identifiable {
   let name: String
   let project: String
   let status: SetStatus
-  let kind: SetKind?
+  /// Shown as the set's Kind.
+  let architecture: SetArchitecture?
   let version: String
   let versionKey: Int
   let tempo: Double
@@ -17,14 +18,13 @@ struct SetTableRow: Identifiable {
   let plugins: Int
   let samples: Int
   let lostSamples: Int
-  /// 0 for none, 1 out of date, 2 current: sorts by how much a copy is worth.
-  let copy: Int
+  let copy: FixedCopy
   let size: Int64
   let projectCreated: Date
   let modified: Date
 
   var statusRank: Int { status.kind.rawValue }
-  var kindRank: Int { kind?.rawValue ?? -1 }
+  var architectureRank: Int { architecture?.rawValue ?? -1 }
 
   /// A scan lists every device; count each plugin once per format.
   private static func pluginCount(_ scan: LiveSetScan) -> Int {
@@ -40,7 +40,7 @@ struct SetTableRow: Identifiable {
     name = set.name
     self.project = project.name
     status = app.status(of: set)
-    kind = app.kind(of: set.url)
+    architecture = app.architecture(of: set.url)
     version = scan.flatMap { SetFacts.version($0.creator) } ?? ""
     versionKey = scan.map { SetFacts.versionKey($0.creator) } ?? 0
     tempo = scan?.tempo ?? 0
@@ -49,11 +49,18 @@ struct SetTableRow: Identifiable {
     plugins = scan.map(Self.pluginCount) ?? 0
     samples = scan?.samples.count ?? 0
     lostSamples = app.lostSamples(of: set.url)
-    copy = set.copyURL == nil ? 0 : set.copyIsCurrent ? 2 : 1
+    copy = set.copyURL == nil ? .none : set.copyIsCurrent ? .current : .outOfDate
     size = set.size ?? 0
     projectCreated = project.created ?? .distantPast
     modified = set.modified ?? .distantPast
   }
+}
+
+/// Whether a set has a fixed copy beside it. Sorts by how much the copy is worth.
+enum FixedCopy: Int, Comparable {
+  case none, outOfDate, current
+
+  static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 }
 
 /// Sets with their status and vital statistics. Double-click opens a set's page;
@@ -129,10 +136,11 @@ struct SetsTable: View {
     }
     .width(min: 120, ideal: 170)
     .customizationID("status")
-    TableColumn("Kind", value: \.kindRank) { row in
+    TableColumn("Kind", value: \.architectureRank) { row in
       // Only Native and x86-64 sets load anywhere.
-      Text(row.kind?.title ?? "").foregroundStyle(row.kind.map { $0 > .x86_64 } == true ? .red : .primary)
-        .help(row.kind?.explanation ?? "")
+      Text(row.architecture?.title ?? "")
+        .foregroundStyle(row.architecture.map { $0 > .x86_64 } == true ? .red : .primary)
+        .help(row.architecture?.explanation ?? "")
     }
     .width(min: 50, ideal: 70)
     .customizationID("kind")
@@ -179,9 +187,9 @@ struct SetsTable: View {
     .customizationID("missing")
     TableColumn("Fixed Copy", value: \.copy) { row in
       switch row.copy {
-      case 2: Text("Current")
-      case 1: Text("Out of date").foregroundStyle(.orange)
-      default: EmptyView()
+      case .current: Text("Current")
+      case .outOfDate: Text("Out of date").foregroundStyle(.orange)
+      case .none: EmptyView()
       }
     }
     .width(min: 60, ideal: 80)

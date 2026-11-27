@@ -19,7 +19,7 @@ enum SelfTest {
     print("\(url.path): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
 
     var counts: [SetStatus.Kind: Int] = [:]
-    var kinds: [SetKind: Int] = [:]
+    var architectures: [SetArchitecture: Int] = [:]
     var stuckSets: [String: Set<URL>] = [:]
     var reasons: [String: String] = [:]
     var mismatches = 0, unreadable = 0
@@ -39,12 +39,12 @@ enum SelfTest {
         let status = SetStatus.resolve(
           scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory)
         counts[status.kind, default: 0] += 1
-        kinds[inventory.kind(of: scan), default: 0] += 1
-        let missing = locations.missing(in: scan, setURL: set.url, index: index)
-        let real = missing.filter { !$0.isFreeze }
+        architectures[inventory.architecture(of: scan), default: 0] += 1
+        let missing = locations.files(in: scan, setURL: set.url, index: index).filter { $0.state != .found }
+        let real = missing.filter { $0.state != .freeze }
         if !real.isEmpty { setsMissing += 1 }
         filesMissing += real.count
-        namesakes += real.filter(\.hasNamesake).count
+        namesakes += real.filter { $0.state == .relinkable }.count
         freezeMissing += missing.count - real.count
         if scan.tempo == nil { noTempo += 1 }
         let preferred = LiveApps.preferred(forCreator: scan.creator)
@@ -52,7 +52,7 @@ enum SelfTest {
         opensIn[(preferred?.name ?? "no Live") + (later.isEmpty ? "" : " (or \(later.joined(separator: ", ")))"), default: 0] += 1
         if listMissing && !real.isEmpty {
           print("  \(set.url.lastPathComponent): \(scan.samples.count) samples, \(real.count) missing")
-          for m in real.prefix(5) { print("    \(m.hasNamesake ? "≈ " : "")\(m.lastKnown)") }
+          for m in real.prefix(5) { print("    \(m.state == .relinkable ? "≈ " : "")\(m.path)") }
         }
         if case .stuck(let plugins, _) = status {
           for p in plugins {
@@ -88,7 +88,7 @@ enum SelfTest {
         print("  ✗ \(set.url.lastPathComponent): \(error)")
       }
     }
-    print("  Kind: " + [SetKind.native, .x86_64, .bit32, .notInstalled].map { "\($0.title) \(kinds[$0] ?? 0)" }.joined(separator: ", "))
+    print("  Kind: " + [SetArchitecture.native, .x86_64, .bit32, .notInstalled].map { "\($0.title) \(architectures[$0] ?? 0)" }.joined(separator: ", "))
     for kind in SetStatus.Kind.allCases where counts[kind] != nil {
       print("  \(kind.title): \(counts[kind]!)")
     }

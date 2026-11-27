@@ -22,23 +22,13 @@ struct SampleRef: Codable, Sendable, Hashable {
   var isFreeze: Bool { relative.contains("Samples/Processed/Freeze/") }
 }
 
-/// A sample no candidate location has.
-struct MissingSample: Hashable, Sendable {
-  let fileName: String
-  /// Where the set last had it.
-  let lastKnown: String
-  let isFreeze: Bool
-  /// A file with its name is in Live's libraries or your Places, so Live's File
-  /// Manager ("Search Library") can likely relink it.
-  let hasNamesake: Bool
-}
-
-/// A sample a set refers to, and where it is now: a set page's Samples table.
+/// A sample a set refers to, and where it is now.
 struct SampleFile: Identifiable, Hashable, Sendable {
   enum State: Int, Comparable, Sendable {
     /// Gone, with nothing of its name to relink to.
     case lost
-    /// Not where the set expects, but a file of its name is in the libraries or Places.
+    /// Not where the set expects, but a file of its name is in Live's libraries or
+    /// your Places, so Live's File Manager ("Search Library") can likely relink it.
     case relinkable
     /// A missing freeze file: Live freezes the track again.
     case freeze
@@ -137,22 +127,25 @@ struct LiveLocations: Sendable {
     return out
   }
 
-  /// Every sample in a set, found or not. `missing` is the set's background
-  /// check, which knows which missing ones Live can relink. Touches the disk.
-  func files(in scan: LiveSetScan, setURL: URL, missing: [MissingSample]) -> [SampleFile] {
+  /// Every sample in a set, found or not. `index` tells a missing sample Live can
+  /// likely relink from a lost one. Touches the disk.
+  func files(in scan: LiveSetScan, setURL: URL, index: SampleIndex) -> [SampleFile] {
     let folder = setURL.deletingLastPathComponent()
     let fm = FileManager.default
     return scan.samples.enumerated().map { i, sample in
       let places = candidates(for: sample, setFolder: folder)
-      if let path = places.first(where: { fm.fileExists(atPath: $0) }) {
-        let size = (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
-        return SampleFile(id: i, fileName: sample.fileName, path: path,
-                          location: location(of: path, project: folder), state: .found, size: size)
+      // Reading attributes both finds the file and sizes it.
+      for path in places {
+        if let attributes = try? fm.attributesOfItem(atPath: path) {
+          return SampleFile(id: i, fileName: sample.fileName, path: path,
+                            location: location(of: path, project: folder), state: .found,
+                            size: (attributes[.size] as? NSNumber)?.int64Value ?? 0)
+        }
       }
-      let lastKnown = places.first ?? sample.relative
-      let relinkable = missing.contains { $0.lastKnown == lastKnown && $0.fileName == sample.fileName && $0.hasNamesake }
-      let state: SampleFile.State = sample.isFreeze ? .freeze : relinkable ? .relinkable : .lost
-      return SampleFile(id: i, fileName: sample.fileName, path: lastKnown, location: "", state: state, size: 0)
+      let state: SampleFile.State = sample.isFreeze ? .freeze
+        : index.contains(sample.fileName) ? .relinkable : .lost
+      return SampleFile(id: i, fileName: sample.fileName, path: places.first ?? sample.relative,
+                        location: "", state: state, size: 0)
     }
   }
 
@@ -169,19 +162,6 @@ struct LiveLocations: Sendable {
     if under(factoryPacks) { return "Packs" }
     if places.contains(where: under) { return "Places" }
     return "Elsewhere"
-  }
-
-  /// The set's samples that aren't anywhere Live would look. Touches the disk.
-  func missing(in scan: LiveSetScan, setURL: URL, index: SampleIndex) -> [MissingSample] {
-    let folder = setURL.deletingLastPathComponent()
-    let fm = FileManager.default
-    return scan.samples.compactMap { sample in
-      let places = candidates(for: sample, setFolder: folder)
-      if places.contains(where: { fm.fileExists(atPath: $0) }) { return nil }
-      return MissingSample(
-        fileName: sample.fileName, lastKnown: places.first ?? sample.relative, isFreeze: sample.isFreeze,
-        hasNamesake: index.contains(sample.fileName))
-    }
   }
 
   /// Every folder Live's browser searches.
