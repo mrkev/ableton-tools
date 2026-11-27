@@ -51,10 +51,8 @@ struct PluginsPage: View {
             HStack(spacing: 6) {
               Image(systemName: p.verdict.icon).foregroundStyle(p.verdict.tint).frame(width: 16)
               Text(p.verdict.title).lineLimit(1)
-              if let detail = p.verdict.detail {
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-              }
             }
+            // The why is in the tooltip and the HUD.
             .help([p.verdict.title, p.verdict.detail].compactMap { $0 }.joined(separator: ": "))
           }
           .width(min: 150, ideal: 200)

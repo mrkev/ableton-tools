@@ -25,7 +25,10 @@ native (Apple Silicon) Live:
   or by a replacement turned on in Settings.
 - **Re-save, then convert**: the same, but saved by Live 9. (A Live 9 set that needs
   no conversion just opens; Live upgrades it.)
-- **Stuck on plugins**: uses a plugin with no native build Live can use.
+- **Rosetta only**: uses plugins whose only build is x86-64 (Intel). The set opens
+  fully when Live runs under Rosetta, not in a native Live.
+- **Stuck on plugins**: uses a plugin that loads in no Live: 32-bit (which no current
+  Mac runs, Rosetta included), not installed, or a VST3 with a different id.
 - **Converted**: a current fixed copy beside the set opens natively.
 
 A fixed copy (`<name>-vst3.als`, or `<name>-converted.als`) shows under its set rather
@@ -40,9 +43,9 @@ saved; right-click the table's header to show or hide columns, and double-click 
 row to open its page. A set's **kind** is what its least capable plugin needs as
 saved: **Native** (Apple Silicon), **x86-64** (Live under Rosetta), **32-bit** (no
 current Mac runs it, Rosetta included) or **Not Installed**. **Plugins**
-lists every plugin in the library with what it needs (works natively, converts to
-its native VST3, can be replaced, Rosetta only for an x86-64 build, or won't load for
-a 32-bit or missing one), the architecture of its installed build
+lists every plugin in the library with what it needs (native, converts to native
+(its VST3), can be replaced, Rosetta only for an x86-64 build, or won't load for a
+32-bit or missing one), the architecture of its installed build
 (native arm64, x86-64, 32-bit, or not installed) and how many sets use it;
 double-click one for which sets those are, in a HUD panel, and Show in Finder for
 its bundle. Every table's columns can be shown or hidden

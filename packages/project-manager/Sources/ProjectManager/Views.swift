@@ -87,6 +87,7 @@ extension SetStatus.Kind {
     case .afterConverting: return .blue
     case .converted, .opens: return .green
     case .resaveFirst: return .orange
+    case .rosettaOnly: return .yellow
     case .stuck, .failed: return .red
     case .scanning: return .secondary
     }

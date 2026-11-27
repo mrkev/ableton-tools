@@ -33,6 +33,8 @@ enum PluginLoad: Equatable {
 struct StuckPlugin: Hashable {
   let name: String
   let reason: String
+  /// Its only build is x86-64: it loads when Live runs under Rosetta.
+  var rosetta = false
 }
 
 /// What's installed, in every format, and which builds are native.
@@ -311,11 +313,16 @@ struct PluginInventory {
 
   private func build(_ plugin: LiveSetScan.AuPlugin) -> SetArchitecture { SetArchitecture(architecture(plugin)) }
 
+  /// Plugins with nothing native to load or convert to, and whether each has an
+  /// Intel build that loads under Rosetta.
   func stuckPlugins(in scan: LiveSetScan) -> [StuckPlugin] {
-    loads(in: scan).compactMap { name, load in
-      if case .stuck(let reason) = load { return StuckPlugin(name: name, reason: reason) }
-      return nil
+    func stuck(_ name: String, _ load: PluginLoad, _ installed: InstalledPlugin?) -> StuckPlugin? {
+      guard case .stuck(let reason) = load else { return nil }
+      return StuckPlugin(name: name, reason: reason, rosetta: installed?.architecture == .x86_64)
     }
+    return scan.vst2.compactMap { stuck($0.name, load($0), installed($0)) }
+      + scan.vst3.compactMap { stuck($0.name, load($0), installed($0)) }
+      + scan.au.compactMap { stuck($0.name, load($0), installed($0)) }
   }
 
   /// VST2 devices with a usable VST3, whether or not they need one to load, AUs

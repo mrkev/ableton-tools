@@ -444,6 +444,7 @@ final class AppModel: ObservableObject {
       switch status(of: set) {
       case .afterConverting: out.required.append(set)
       case .stuck(_, let convertible) where convertible > 0: out.partial.append(set)
+      case .rosettaOnly(_, let convertible) where convertible > 0: out.partial.append(set)
       case .opens(let convertible) where convertible > 0: out.optional.append(set)
       default: break
       }

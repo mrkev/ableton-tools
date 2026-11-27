@@ -7,7 +7,7 @@ struct SetSamplesTab: View {
   let url: URL
   @State private var sortOrder = [KeyPathComparator(\SampleFile.state)]
   @State private var selection = Set<SampleFile.ID>()
-  @StoredColumns<SampleFile>("samplesTableColumns") private var columns
+  @StoredColumns<SampleFile>("samplesTableColumns.2") private var columns
 
   var body: some View {
     if let files = app.samples[url] {
@@ -33,7 +33,7 @@ struct SetSamplesTab: View {
   private func table(_ files: [SampleFile]) -> some View {
     Table(files.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
       TableColumn("Name", value: \.fileName) { file in Text(file.fileName).lineLimit(1) }
-        .width(min: 140, ideal: 240)
+        .width(min: 100, ideal: 220)
         .customizationID("name")
         .disabledCustomizationBehavior(.visibility)
       TableColumn("Status", value: \.state) { file in
@@ -41,23 +41,23 @@ struct SetSamplesTab: View {
           .foregroundStyle(file.state.tint)
           .lineLimit(1)
       }
-      .width(min: 90, ideal: 120)
+      .width(min: 80, ideal: 130)
       .customizationID("status")
       TableColumn("Location", value: \.location) { file in Text(file.location).lineLimit(1) }
-        .width(min: 80, ideal: 120)
+        .width(min: 76, ideal: 110)
         .customizationID("location")
       TableColumn("Size", value: \.size) { file in
         Text(file.size > 0 ? ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) : "")
           .monospacedDigit()
       }
-      .width(min: 50, ideal: 70)
+      .width(min: 50, ideal: 66, max: 100)
       .customizationID("size")
       TableColumn("Path", value: \.path) { file in
         Text(file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
           .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
           .help(file.path)
       }
-      .width(min: 160, ideal: 360)
+      .width(min: 100, ideal: 320)
       .customizationID("path")
     }
     .contextMenu(forSelectionType: SampleFile.ID.self) { ids in

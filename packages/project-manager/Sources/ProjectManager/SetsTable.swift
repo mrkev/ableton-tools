@@ -79,7 +79,7 @@ struct SetsTable: View {
   init(rows: [SetTableRow], spansProjects: Bool) {
     self.rows = rows
     self.spansProjects = spansProjects
-    _columns = StoredColumns(spansProjects ? "libraryTableColumns" : "projectTableColumns")
+    _columns = StoredColumns(spansProjects ? "libraryTableColumns.2" : "projectTableColumns.2")
   }
 
   var body: some View {
@@ -110,13 +110,13 @@ struct SetsTable: View {
   /// Which set, and how it fares.
   @Columns private var identity: some TableColumnContent<SetTableRow, KeyPathComparator<SetTableRow>> {
     TableColumn("Set Name", value: \.name) { row in Text(row.name).lineLimit(1) }
-      .width(min: 140, ideal: 220)
+      .width(min: 100, ideal: 170)
       .customizationID("set")
       .disabledCustomizationBehavior(.visibility)
     TableColumn("Project", value: \.project) { row in
       Text(row.project).foregroundStyle(.secondary).lineLimit(1)
     }
-    .width(min: 100, ideal: 160)
+    .width(min: 70, ideal: 130)
     .customizationID("project")
     .defaultVisibility(spansProjects ? .automatic : .hidden)
     TableColumn("Status", value: \.statusRank) { row in
@@ -126,7 +126,7 @@ struct SetsTable: View {
       }
       .help(row.status.detail)
     }
-    .width(min: 120, ideal: 170)
+    .width(min: 110, ideal: 170)
     .customizationID("status")
     TableColumn("Kind", value: \.architectureRank) { row in
       // Only Native and x86-64 sets load anywhere.
@@ -134,39 +134,39 @@ struct SetsTable: View {
         .foregroundStyle(row.architecture.map { $0 > .x86_64 } == true ? .red : .primary)
         .help(row.architecture?.explanation ?? "")
     }
-    .width(min: 50, ideal: 70)
+    .width(min: 50, ideal: 96)
     .customizationID("kind")
   }
 
   /// What's in it.
   @Columns private var music: some TableColumnContent<SetTableRow, KeyPathComparator<SetTableRow>> {
     TableColumn("Live Version", value: \.versionKey) { row in Text(row.version).monospacedDigit() }
-      .width(min: 70, ideal: 84)
+      .width(min: 90, ideal: 92)
       .customizationID("live")
     TableColumn("Tempo", value: \.tempo) { row in
       Text(row.tempo > 0 ? SetFacts.tempoText(row.tempo).replacingOccurrences(of: " BPM", with: "") : "")
         .monospacedDigit()
     }
-    .width(min: 44, ideal: 56)
+    .width(min: 54, ideal: 58, max: 90)
     .customizationID("tempo")
     .defaultVisibility(.hidden)
     TableColumn("Length", value: \.seconds) { row in
       Text(row.seconds > 0 ? SetFacts.duration(row.seconds) : "").monospacedDigit()
     }
-    .width(min: 44, ideal: 60)
+    .width(min: 58, ideal: 62, max: 90)
     .customizationID("length")
     TableColumn("Tracks", value: \.tracks) { row in Text("\(row.tracks)").monospacedDigit() }
-      .width(min: 40, ideal: 50)
+      .width(min: 56, ideal: 58, max: 90)
       .customizationID("tracks")
     TableColumn("Plugins", value: \.plugins) { row in Text("\(row.plugins)").monospacedDigit() }
-      .width(min: 40, ideal: 54)
+      .width(min: 60, ideal: 62, max: 90)
       .customizationID("plugins")
   }
 
   /// Its files.
   @Columns private var files: some TableColumnContent<SetTableRow, KeyPathComparator<SetTableRow>> {
     TableColumn("Samples", value: \.samples) { row in Text("\(row.samples)").monospacedDigit() }
-      .width(min: 44, ideal: 58)
+      .width(min: 66, ideal: 68, max: 100)
       .customizationID("samples")
       .defaultVisibility(.hidden)
     TableColumn("Missing Samples", value: \.lostSamples) { row in
@@ -175,7 +175,7 @@ struct SetsTable: View {
           .help("\(plural(row.lostSamples, "sample")) can't be found")
       }
     }
-    .width(min: 60, ideal: 100)
+    .width(min: 112, ideal: 114, max: 160)
     .customizationID("missing")
     TableColumn("Fixed Copy", value: \.copy) { row in
       switch row.copy {
@@ -184,7 +184,7 @@ struct SetsTable: View {
       case .none: EmptyView()
       }
     }
-    .width(min: 60, ideal: 80)
+    .width(min: 80, ideal: 90)
     .customizationID("copy")
     .defaultVisibility(.hidden)
     TableColumn("Size", value: \.size) { row in
@@ -195,10 +195,10 @@ struct SetsTable: View {
     .customizationID("size")
     .defaultVisibility(.hidden)
     TableColumn("Project Created", value: \.projectCreated) { row in Text(SetsTable.date(row.projectCreated)) }
-      .width(min: 120, ideal: 170)
+      .width(min: 112, ideal: 160)
       .customizationID("created")
     TableColumn("Modified", value: \.modified) { row in Text(SetsTable.date(row.modified)) }
-      .width(min: 120, ideal: 170)
+      .width(min: 92, ideal: 160)
       .customizationID("modified")
   }
 

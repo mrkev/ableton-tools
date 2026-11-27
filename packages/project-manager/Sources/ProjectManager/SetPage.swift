@@ -209,19 +209,38 @@ private struct VerdictBanner: View {
           + "VST3 plugins. Open it in Live 10 or later, save it, then fix it here.")
     }
     if !broken.isEmpty {
-      let names = Set(broken.map(\.name)).sorted()
-      var detail =
-        names.formatted(.list(type: .and)) + (names.count == 1 ? " has" : " have")
-        + " no native version, so \(names.count == 1 ? "it" : "they") won't load."
+      // Left as they are, Intel-only plugins still load when Live runs under Rosetta.
+      let rosetta = broken.filter { group in
+        group.devices.allSatisfy { model.action(for: $0) == .keep }
+          && model.installed(of: group.devices[0])?.architecture == .x86_64
+      }
+      let nowhere = broken.filter { group in !rosetta.contains { $0.id == group.id } }
+      func names(_ groups: [PluginGroup]) -> (list: String, many: Bool) {
+        let names = Set(groups.map(\.name)).sorted()
+        return (names.formatted(.list(type: .and)), names.count > 1)
+      }
+      var detail: String
+      if nowhere.isEmpty {
+        let r = names(rosetta)
+        detail = r.list + (r.many ? " have" : " has") + " only an Intel build, so the set opens fully when \(live) "
+          + "runs under Rosetta."
+      } else {
+        let n = names(nowhere)
+        detail = n.list + (n.many ? " don't" : " doesn't") + " load in any Live."
+        if !rosetta.isEmpty {
+          let r = names(rosetta)
+          detail += " " + r.list + (r.many ? " load" : " loads") + " only under Rosetta."
+        }
+      }
       if broken.contains(where: { catalogs.substitution(for: $0.devices[0]) != nil }) {
         detail += " A replacement is available below."
       }
       if !changing.isEmpty {
         detail += " Fixing still converts the other \(plural(changing.count, "plugin"))."
       }
-      return Verdict(
-        icon: "xmark.octagon.fill", tint: .red, headline: "Won't open natively in \(live)",
-        detail: detail)
+      return nowhere.isEmpty
+        ? Verdict(icon: "exclamationmark.triangle.fill", tint: .yellow, headline: "Rosetta only", detail: detail)
+        : Verdict(icon: "xmark.octagon.fill", tint: .red, headline: "Won't open natively in \(live)", detail: detail)
     }
     if !changing.isEmpty {
       return Verdict(

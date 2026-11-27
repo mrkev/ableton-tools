@@ -37,7 +37,7 @@ struct BatchSheet: View {
           ? "No sets here need fixing to open."
           : "\(candidates.required.count) need fixing to open")
         if !candidates.partial.isEmpty {
-          Toggle("Also \(candidates.partial.count) stuck on other plugins", isOn: $includePartial)
+          Toggle("Also \(candidates.partial.count) held back by other plugins", isOn: $includePartial)
             .toggleStyle(.checkbox)
           Text("Converts what it can, but they still won't open fully.")
             .font(.caption).foregroundStyle(.secondary)

@@ -54,11 +54,13 @@ enum SelfTest {
           print("  \(set.url.lastPathComponent): \(scan.samples.count) samples, \(real.count) missing")
           for m in real.prefix(5) { print("    \(m.state == .relinkable ? "≈ " : "")\(m.path)") }
         }
-        if case .stuck(let plugins, _) = status {
+        switch status {
+        case .stuck(let plugins, _), .rosettaOnly(let plugins, _):
           for p in plugins {
             stuckSets[p.name, default: []].insert(set.url)
-            reasons[p.name] = p.reason
+            reasons[p.name] = p.rosetta ? "Rosetta only: \(p.reason)" : p.reason
           }
+        default: break
         }
 
         t = Date()

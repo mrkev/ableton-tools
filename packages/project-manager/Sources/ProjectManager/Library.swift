@@ -121,9 +121,13 @@ enum SetStatus: Hashable {
   /// Saved by Live < 10, so `Int` devices can only convert after a re-save. A set
   /// that needs no conversion just opens: Live upgrades it.
   case resaveFirst(Int)
-  /// These plugins have nothing native. `convertible` other devices could convert,
-  /// but the set still wouldn't open fully.
+  /// These plugins load in no Live: 32-bit, not installed, or a VST3 with a
+  /// different id. `convertible` other devices could convert, but the set still
+  /// wouldn't open fully.
   case stuck([StuckPlugin], convertible: Int)
+  /// These plugins have only an Intel build: the set opens fully when Live runs
+  /// under Rosetta, and in a native Live without them.
+  case rosettaOnly([StuckPlugin], convertible: Int)
   /// `<name>-vst3.als` is current and opens.
   case converted
 
@@ -134,26 +138,32 @@ enum SetStatus: Hashable {
     if hasConversion {
       guard let convertedScan else { return .scanning }
       // A conversion made before opting in to a substitution still has the plugin.
-      let stuck = inventory.loads(in: convertedScan).compactMap { name, load -> StuckPlugin? in
+      let unconverted = inventory.loads(in: convertedScan).compactMap { name, load -> StuckPlugin? in
         switch load {
-        case .stuck(let reason): return StuckPlugin(name: name, reason: reason)
         case .substitute, .needsConversion:
           return StuckPlugin(name: name, reason: "the -vst3.als predates this replacement; remove it to convert again")
-        case .native: return nil
+        case .native, .stuck: return nil
         }
       }
-      return stuck.isEmpty ? .converted : .stuck(stuck, convertible: 0)
+      return notNative(inventory.stuckPlugins(in: convertedScan) + unconverted, convertible: 0) ?? .converted
     }
     let convertible = scan.predatesVst3
       ? inventory.loads(in: scan).filter { $0.load.needsWork && !$0.load.needsLive10 }.count
       : inventory.convertibleCount(in: scan)
-    let stuck = inventory.stuckPlugins(in: scan)
-    if !stuck.isEmpty { return .stuck(stuck, convertible: convertible) }
+    if let status = notNative(inventory.stuckPlugins(in: scan), convertible: convertible) { return status }
     let work = inventory.loads(in: scan).map(\.load).filter(\.needsWork)
     if !work.isEmpty {
       return scan.predatesVst3 && work.contains(where: \.needsLive10) ? .resaveFirst(work.count) : .afterConverting(work.count)
     }
     return .opens(convertible: convertible)
+  }
+
+  /// Stuck if anything loads in no Live; Rosetta only if everything that doesn't
+  /// load natively has an Intel build.
+  private static func notNative(_ plugins: [StuckPlugin], convertible: Int) -> SetStatus? {
+    let nowhere = plugins.filter { !$0.rosetta }
+    if !nowhere.isEmpty { return .stuck(nowhere, convertible: convertible) }
+    return plugins.isEmpty ? nil : .rosettaOnly(plugins, convertible: convertible)
   }
 
   var kind: Kind {
@@ -164,6 +174,7 @@ enum SetStatus: Hashable {
     case .afterConverting: return .afterConverting
     case .resaveFirst: return .resaveFirst
     case .stuck: return .stuck
+    case .rosettaOnly: return .rosettaOnly
     case .converted: return .converted
     }
   }
@@ -179,23 +190,27 @@ enum SetStatus: Hashable {
     case .resaveFirst(let n): return "Re-save in Live 10+, then convert \(n) device\(n == 1 ? "" : "s")"
     case .stuck(let plugins, _):
       return "Stuck on " + Set(plugins.map(\.name)).sorted().joined(separator: ", ")
+    case .rosettaOnly(let plugins, _):
+      return "Rosetta only: " + Set(plugins.map(\.name)).sorted().joined(separator: ", ")
+        + (plugins.count == 1 ? " has" : " have") + " only an Intel build"
     case .converted: return "Converted, and opens natively"
     }
   }
 
   /// Most urgent first; a project shows its first non-empty kind.
   enum Kind: Int, CaseIterable, Comparable {
-    case afterConverting, resaveFirst, stuck, failed, scanning, converted, opens
+    case afterConverting, resaveFirst, stuck, rosettaOnly, failed, scanning, converted, opens
 
     static func < (a: Kind, b: Kind) -> Bool { a.rawValue < b.rawValue }
 
-    var needsWork: Bool { [.afterConverting, .resaveFirst, .stuck, .failed].contains(self) }
+    var needsWork: Bool { [.afterConverting, .resaveFirst, .stuck, .rosettaOnly, .failed].contains(self) }
 
     var title: String {
       switch self {
       case .afterConverting: return "Opens after converting"
       case .resaveFirst: return "Re-save, then convert"
       case .stuck: return "Stuck on plugins"
+      case .rosettaOnly: return "Rosetta only"
       case .failed: return "Couldn't read"
       case .scanning: return "Scanning"
       case .converted: return "Converted"
@@ -207,7 +222,8 @@ enum SetStatus: Hashable {
       switch self {
       case .afterConverting: return "Needs VST2 devices replaced by their native VST3s, or opted-in replacements."
       case .resaveFirst: return "Saved by Live 9. Re-save in Live 10+, then convert."
-      case .stuck: return "Uses a plugin with no native build Live can use."
+      case .stuck: return "Uses a plugin that loads in no Live: 32-bit, or not installed."
+      case .rosettaOnly: return "Uses plugins with only an Intel build: it opens fully when Live runs under Rosetta."
       case .failed: return "The file couldn't be read as a Live Set."
       case .scanning: return "Not checked yet."
       case .converted: return "A current -vst3.als exists beside the set and opens natively."
@@ -220,6 +236,7 @@ enum SetStatus: Hashable {
       case .afterConverting: return "arrow.right.circle.fill"
       case .resaveFirst: return "arrow.triangle.2.circlepath"
       case .stuck: return "nosign"
+      case .rosettaOnly: return "exclamationmark.triangle.fill"
       case .failed: return "exclamationmark.triangle.fill"
       case .scanning: return "ellipsis.circle"
       case .converted: return "checkmark.circle.fill"

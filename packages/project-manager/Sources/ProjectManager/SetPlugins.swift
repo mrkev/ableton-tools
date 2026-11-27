@@ -7,7 +7,7 @@ struct SetPluginsTab: View {
   @EnvironmentObject var model: SetModel
   @State private var choosingAU: AUChoice?
   @State private var selection = Set<Device.ID>()
-  @StoredColumns<PluginDeviceRow>("setPluginsTableColumns") private var columns
+  @StoredColumns<PluginDeviceRow>("setPluginsTableColumns.2") private var columns
   @State private var sortOrder = [KeyPathComparator(\PluginDeviceRow.rank)]
 
   var body: some View {
@@ -76,16 +76,16 @@ struct SetPluginsTab: View {
           Text(row.name).lineLimit(1)
         }
       }
-      .width(min: 120, ideal: 170)
+      .width(min: 100, ideal: 150)
       .customizationID("plugin")
       .disabledCustomizationBehavior(.visibility)
       TableColumn("Format", value: \.format) { row in
         if !row.format.isEmpty { FormatBadge(text: row.format) }
       }
-      .width(min: 44, ideal: 54)
+      .width(min: 56, ideal: 58, max: 72)
       .customizationID("format")
       TableColumn("Track", value: \.track) { row in Text(row.track).lineLimit(1) }
-        .width(min: 80, ideal: 140)
+        .width(min: 60, ideal: 130)
         .customizationID("track")
       TableColumn("Device", value: \.deviceName) { row in
         HStack(spacing: 6) {
@@ -100,7 +100,7 @@ struct SetPluginsTab: View {
         Text(row.now.title).foregroundStyle(row.now.tint == .green ? .primary : row.now.tint).lineLimit(1)
           .help(row.now.detail ?? row.now.title)
       }
-      .width(min: 80, ideal: 100)
+      .width(min: 84, ideal: 100)
       .customizationID("loadsnow")
       TableColumn("When Fixed", value: \.fix.title) { row in
         Menu {
@@ -113,7 +113,7 @@ struct SetPluginsTab: View {
         .help(row.fix.detail.map { "\(row.fix.title): \($0)" } ?? row.fix.title)
         .disabled(catalogs.isLoadingAudioUnits || catalogs.isHostingPlugins)
       }
-      .width(min: 140, ideal: 220)
+      .width(min: 100, ideal: 180)
       .customizationID("whenfixed")
     }
     .contextMenu(forSelectionType: Device.ID.self) { ids in
@@ -192,7 +192,7 @@ private struct PluginDeviceRow: Identifiable {
     }
     switch model.load(of: device) {
     case .native?, nil:
-      now = PluginOutcome(icon: "checkmark.circle.fill", tint: .green, title: "Natively")
+      now = PluginOutcome(icon: "checkmark.circle.fill", tint: .green, title: "Native")
       nowRank = 2
     case .stuck(let why)?:
       now = notNative(why)
@@ -216,8 +216,9 @@ private struct PluginDeviceRow: Identifiable {
       }
     case .replaceVST3:
       // Its own VST3, matched by the VST2 id it replaces, and always native.
-      let verb = model.loadsNativelyAsVst2(device) ? "Moves to" : "Becomes"
-      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .blue, title: "\(verb) VST3 (native)",
+      // A VST2 that's already native only changes format.
+      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .blue,
+                          title: model.loadsNativelyAsVst2(device) ? "Moves to VST3" : "Becomes native (VST3)",
                           detail: "keeps its settings")
     case .substitute(let sub, _):
       fix = PluginOutcome(icon: "arrow.triangle.swap", tint: .blue, title: "Replaced with \(sub.targetName)",
@@ -248,7 +249,8 @@ private struct PluginActionItems: View {
     Button("Leave As Is") { model.setAction(.keep, for: devices) }
     switch model.vst3Availability(of: device) {
     case .available(let target):
-      Button("\(model.loadsNativelyAsVst2(device) ? "Move" : "Convert") to VST3 (native, keeps settings)") {
+      Button(model.loadsNativelyAsVst2(device) ? "Move to VST3 (keeps settings)"
+             : "Convert to native (VST3), keeps settings") {
         model.setAction(.replaceVST3(target), for: devices)
       }
     case .unavailable(let why):

@@ -31,8 +31,8 @@ enum PluginVerdict: Hashable {
 
   var title: String {
     switch self {
-    case .native: return "Works natively"
-    case .converts: return "Converts to VST3 (native)"
+    case .native: return "Native"
+    case .converts: return "Converts to native (VST3)"
     case .replaceable(let s): return "Can be replaced with \(s.targetName)"
     case .rosettaOnly: return "Rosetta only"
     case .stuck: return "Won't load"

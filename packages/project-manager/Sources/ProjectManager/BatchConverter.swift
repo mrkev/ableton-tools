@@ -277,7 +277,7 @@ enum BatchCli {
       switch SetStatus.resolve(
         scan: scan, convertedScan: converted, hasConversion: set.convertedURL != nil, inventory: inventory) {
       case .afterConverting: wanted = true
-      case .stuck(_, let convertible): wanted = includePartial && convertible > 0
+      case .stuck(_, let convertible), .rosettaOnly(_, let convertible): wanted = includePartial && convertible > 0
       case .opens(let convertible): wanted = includeOptional && convertible > 0
       default: wanted = false
       }
