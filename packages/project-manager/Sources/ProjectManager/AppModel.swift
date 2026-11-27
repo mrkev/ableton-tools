@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Installed plugins, shared by every open set.
 @MainActor
@@ -105,12 +104,13 @@ struct BatchCandidates {
   var isEmpty: Bool { required.isEmpty && partial.isEmpty && optional.isEmpty }
 }
 
-/// What's open: a library or project (with its sets' statuses), or a single set.
+/// The open folder of projects (or one project), with its sets' statuses.
 @MainActor
 final class AppModel: ObservableObject {
   let catalogs = PluginCatalogs()
 
-  @Published private(set) var root: OpenedRoot?
+  /// The folder that was opened.
+  @Published private(set) var root: URL?
   @Published private(set) var projects: [ProjectEntry] = []
   @Published private(set) var statuses: [URL: SetStatus] = [:]
   @Published private(set) var scanned = 0
@@ -171,18 +171,18 @@ final class AppModel: ObservableObject {
   func presentOpenPanel() {
     guard !catalogs.isHostingPlugins else { return }
     let panel = NSOpenPanel()
-    panel.message = "Choose a folder of projects, a project folder, or a Live Set."
+    panel.message = "Choose your Projects folder, or one project folder."
     panel.canChooseDirectories = true
-    panel.canChooseFiles = true
-    panel.allowedContentTypes = [UTType(filenameExtension: "als") ?? .data, .folder]
+    panel.canChooseFiles = false
     panel.allowsMultipleSelection = false
     if panel.runModal() == .OK, let url = panel.url { open(url: url) }
   }
 
   func open(url: URL) {
     guard !catalogs.isHostingPlugins else { return }
-    guard let opened = LibraryDiscovery.classify(url) else {
-      openError = "No Live Sets found in “\(url.lastPathComponent)”."
+    let found = LibraryDiscovery.projects(in: url)
+    guard !found.isEmpty else {
+      openError = "No Live projects found in “\(url.lastPathComponent)”."
       return
     }
     openError = nil
@@ -191,16 +191,11 @@ final class AppModel: ObservableObject {
     scans = [:]
     scanFailures = [:]
     statuses = [:]
-    root = opened
-    projects = LibraryDiscovery.projects(for: opened)
+    root = url
+    projects = found
     missingSamples = [:]
     plugins = []
     projectSizes = [:]
-    if case .set(let set) = opened {
-      selection = [.set(set)]
-      checkSamples(of: [set])
-      return
-    }
     selection = [.overview]
     startScan()
   }
@@ -211,7 +206,7 @@ final class AppModel: ObservableObject {
     guard let root, !catalogs.isHostingPlugins else { return }
     setModels = setModels.filter { !$0.value.isStaleOnDisk || $0.value.hasChanges }
     objectWillChange.send()
-    projects = LibraryDiscovery.projects(for: root)
+    projects = LibraryDiscovery.projects(in: root)
     startScan()
   }
 
@@ -252,6 +247,8 @@ final class AppModel: ObservableObject {
     }
     return SetContext(url: url, entry: nil, project: nil, original: nil)
   }
+
+  func project(_ url: URL) -> ProjectEntry? { projects.first { $0.url == url } }
 
   /// Selects a set (or copy) and opens its project in the sidebar.
   func reveal(_ url: URL) {
@@ -350,10 +347,10 @@ final class AppModel: ObservableObject {
   /// The sets the menu's bulk fix applies to: those picked, or what's shown.
   var batchScope: (sets: [LiveSetEntry], title: String) {
     if selection.count > 1 { return (selectedSets, "\(selectedSets.count) selected sets") }
-    if case .project(let url)? = focus, let project = projects.first(where: { $0.url == url }) {
+    if case .project(let url)? = focus, let project = project(url) {
       return (project.sets, project.name)
     }
-    return (allSets, root?.url.lastPathComponent ?? "Library")
+    return (allSets, root?.lastPathComponent ?? "Library")
   }
 
   func dismissBatch() {
@@ -421,8 +418,7 @@ final class AppModel: ObservableObject {
     }
   }
 
-  /// Looks for every set's samples, off the main thread. A single opened set is
-  /// scanned here first, since it isn't part of a library scan.
+  /// Looks for every set's samples, off the main thread.
   private func checkSamples(of urls: [URL]) {
     sampleTask?.cancel()
     let known = scans
@@ -433,7 +429,7 @@ final class AppModel: ObservableObject {
         var out: [URL: [MissingSample]] = [:]
         for url in urls {
           if Task.isCancelled { break }
-          guard let scan = known[url] ?? (try? LiveSetScanner.scan(url: url)) else { continue }
+          guard let scan = known[url] else { continue }
           out[url] = locations.missing(in: scan, setURL: url, index: index)
         }
         return out
@@ -477,13 +473,10 @@ final class AppModel: ObservableObject {
     return SetStatus.resolve(scan: scan, convertedScan: nil, hasConversion: false, inventory: inventory)
   }
 
-  /// The status of whatever a set page shows.
+  /// The status of whatever a set page shows: a set, or a fixed copy.
   func status(of url: URL) -> SetStatus {
     if let status = statuses[url] { return status }
-    let context = context(for: url)
-    if let original = context.original { return copyStatus(of: original) ?? .scanning }
-    guard let scan = scans[url], let inventory = catalogs.effectiveInventory else { return .scanning }
-    return SetStatus.resolve(scan: scan, convertedScan: nil, hasConversion: false, inventory: inventory)
+    return context(for: url).original.flatMap(copyStatus) ?? .scanning
   }
 
   /// Missing samples that nothing of the same name could stand in for.
@@ -494,24 +487,6 @@ final class AppModel: ObservableObject {
   func status(of set: LiveSetEntry) -> SetStatus { statuses[set.url] ?? .scanning }
 
   // MARK: Summaries
-
-  func sets(in item: SidebarItem?) -> [LiveSetEntry] {
-    if case .project(let url) = item { return projects.first { $0.url == url }?.sets ?? [] }
-    return allSets
-  }
-
-  /// A single opened set has no library scan; read it once for its page.
-  func scanIfNeeded(_ url: URL) {
-    guard scans[url] == nil, scanFailures[url] == nil else { return }
-    Task {
-      let result = await Task.detached(priority: .userInitiated) { Result { try LiveSetScanner.scan(url: url) } }.value
-      switch result {
-      case .success(let scan): scans[url] = scan
-      case .failure(let error): scanFailures[url] = String(describing: error)
-      }
-      objectWillChange.send()
-    }
-  }
 
   func counts(in sets: [LiveSetEntry]) -> [SetStatus.Kind: Int] {
     sets.reduce(into: [:]) { $0[status(of: $1).kind, default: 0] += 1 }

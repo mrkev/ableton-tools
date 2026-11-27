@@ -7,16 +7,16 @@ enum SelfTest {
   /// DOM extractor (the code that actually converts). Returns a process exit code.
   static func runLibrary(path: String) -> Int32 {
     let url = URL(fileURLWithPath: path)
-    guard let root = LibraryDiscovery.classify(url) else {
-      print("no Live Sets in \(path)")
+    let projects = LibraryDiscovery.projects(in: url)
+    guard !projects.isEmpty else {
+      print("no Live projects in \(path)")
       return 1
     }
-    let projects = LibraryDiscovery.projects(for: root)
     let sets = projects.flatMap(\.sets)
     var inventory = PluginInventory.loadNow()
     // Opt-ins as the batch takes them (--substitute-orbit, --substitute-pro-c).
     inventory.substitutions = Substitution.optedIn(arguments: CommandLine.arguments)
-    print("\(root): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
+    print("\(url.path): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
 
     var counts: [SetStatus.Kind: Int] = [:]
     var stuckSets: [String: Set<URL>] = [:]

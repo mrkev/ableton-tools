@@ -9,12 +9,15 @@ struct LiveSetEntry: Identifiable, Hashable, Codable {
   var copyIsCurrent = false
   /// When the set was last saved.
   var modified: Date?
+  /// The file's size in bytes.
+  var size: Int64?
 
-  init(url: URL, copyURL: URL? = nil, copyIsCurrent: Bool = false, modified: Date? = nil) {
+  init(url: URL, copyURL: URL? = nil, copyIsCurrent: Bool = false, modified: Date? = nil, size: Int64? = nil) {
     self.url = url
     self.copyURL = copyURL
     self.copyIsCurrent = copyIsCurrent
     self.modified = modified
+    self.size = size
   }
 
   /// The copy, when it's current.
@@ -27,6 +30,9 @@ struct LiveSetEntry: Identifiable, Hashable, Codable {
 struct ProjectEntry: Identifiable, Hashable {
   let url: URL
   let sets: [LiveSetEntry]
+  /// When the folder was made. Live rewrites a set's file on every save, so this is
+  /// the only creation date that lasts.
+  var created: Date?
 
   var id: URL { url }
   /// Live names project folders "<name> Project".
@@ -36,51 +42,31 @@ struct ProjectEntry: Identifiable, Hashable {
   }
 }
 
-/// What the user opened.
-enum OpenedRoot: Equatable {
-  case library(URL)
-  case project(URL)
-  case set(URL)
-
-  var url: URL {
-    switch self {
-    case .library(let u), .project(let u), .set(let u): return u
-    }
-  }
-}
-
 enum LibraryDiscovery {
   static let convertedSuffix = "-vst3"
   /// Names a fixed copy can have, preferred first. `-converted` is what Save As
   /// suggests when a device became an AU.
   static let copySuffixes = [convertedSuffix, "-converted"]
   private static let projectMarker = "Ableton Project Info"
+  private static let keys: Set<URLResourceKey> = [
+    .isDirectoryKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey,
+  ]
 
-  /// A single set, a project folder, or a folder of project folders.
-  static func classify(_ url: URL) -> OpenedRoot? {
-    guard isDirectory(url) else { return url.pathExtension == "als" ? .set(url) : nil }
-    if isMarkedProject(url) { return .project(url) }
-    if subfolders(of: url).contains(where: { isMarkedProject($0) || !setFiles(in: $0).isEmpty }) {
-      return .library(url)
-    }
-    return setFiles(in: url).isEmpty ? nil : .project(url)
-  }
-
-  static func projects(for root: OpenedRoot) -> [ProjectEntry] {
-    switch root {
-    case .set:
-      return []
-    case .project(let url):
-      return [project(at: url)].compactMap { $0 }
-    case .library(let url):
-      return subfolders(of: url).compactMap(project(at:))
+  /// The projects in a folder: the folder itself when it's a project, or else the
+  /// project folders inside it. Empty when there are none.
+  static func projects(in folder: URL) -> [ProjectEntry] {
+    guard isDirectory(folder) else { return [] }
+    if !isDirectory(folder.appendingPathComponent(projectMarker)) {
+      let inside = subfolders(of: folder).compactMap(project(at:))
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+      if !inside.isEmpty { return inside }
     }
+    return [project(at: folder)].compactMap { $0 }
   }
 
   /// Sets sit directly in the project folder, so `Backup` is skipped naturally.
   private static func project(at url: URL) -> ProjectEntry? {
-    let files = setFiles(in: url)
+    let files = contents(of: url).filter { $0.pathExtension == "als" }
     let names = Set(files.map { $0.deletingPathExtension().lastPathComponent })
     let sets = files.compactMap { file -> LiveSetEntry? in
       let name = file.deletingPathExtension().lastPathComponent
@@ -90,12 +76,14 @@ enum LibraryDiscovery {
       }
       let copy = copySuffixes.lazy.map { url.appendingPathComponent(name + $0 + ".als") }
         .first { FileManager.default.fileExists(atPath: $0.path) }
+      let values = try? file.resourceValues(forKeys: keys)
       return LiveSetEntry(
         url: file, copyURL: copy, copyIsCurrent: copy.map { isCurrent($0, for: file) } ?? false,
-        modified: modified(file))
+        modified: values?.contentModificationDate, size: values?.fileSize.map(Int64.init))
     }
     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    return sets.isEmpty ? nil : ProjectEntry(url: url, sets: sets)
+    guard !sets.isEmpty else { return nil }
+    return ProjectEntry(url: url, sets: sets, created: try? url.resourceValues(forKeys: keys).creationDate)
   }
 
   /// A conversion older than its original no longer reflects it.
@@ -112,21 +100,12 @@ enum LibraryDiscovery {
     (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
   }
 
-  private static func isMarkedProject(_ url: URL) -> Bool {
-    isDirectory(url.appendingPathComponent(projectMarker))
-  }
-
   private static func contents(of url: URL) -> [URL] {
     (try? FileManager.default.contentsOfDirectory(
-      at: url, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-      options: [.skipsHiddenFiles])) ?? []
+      at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
   }
 
   private static func subfolders(of url: URL) -> [URL] { contents(of: url).filter(isDirectory) }
-
-  private static func setFiles(in url: URL) -> [URL] {
-    contents(of: url).filter { $0.pathExtension == "als" }
-  }
 }
 
 /// Whether a set will open with all its plugins in a native (Apple Silicon) Live.

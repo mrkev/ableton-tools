@@ -69,3 +69,74 @@ struct ChooseAUView: View {
     .frame(width: 520, height: 460)
   }
 }
+
+struct StatusIcon: View {
+  let kind: SetStatus.Kind
+
+  var body: some View {
+    Image(systemName: kind.icon)
+      .foregroundStyle(kind.tint)
+      .frame(width: 16)
+      .accessibilityLabel(kind.title)
+  }
+}
+
+extension SetStatus.Kind {
+  var tint: Color {
+    switch self {
+    case .afterConverting: return .blue
+    case .converted, .opens: return .green
+    case .resaveFirst: return .orange
+    case .stuck, .failed: return .red
+    case .scanning: return .secondary
+    }
+  }
+}
+
+/// Lays its children out in rows, wrapping when a row is full.
+struct FlowLayout: Layout {
+  var spacing: CGFloat = 8
+  var lineSpacing: CGFloat = 6
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+    let width = rows.map { $0.width }.max() ?? 0
+    let height = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(rows.count - 1, 0))
+    return CGSize(width: width, height: height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    var y = bounds.minY
+    for row in arrange(width: bounds.width, subviews: subviews) {
+      var x = bounds.minX
+      for i in row.indices {
+        let size = subviews[i].sizeThatFits(.unspecified)
+        subviews[i].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: .unspecified)
+        x += size.width + spacing
+      }
+      y += row.height + lineSpacing
+    }
+  }
+
+  private struct Row {
+    var indices: [Int] = []
+    var width: CGFloat = 0
+    var height: CGFloat = 0
+  }
+
+  private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+    var rows = [Row()]
+    for i in subviews.indices {
+      let size = subviews[i].sizeThatFits(.unspecified)
+      let extra = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
+      if rows[rows.count - 1].width + extra > width && !rows[rows.count - 1].indices.isEmpty {
+        rows.append(Row())
+      }
+      let added = rows[rows.count - 1].indices.isEmpty ? size.width : size.width + spacing
+      rows[rows.count - 1].indices.append(i)
+      rows[rows.count - 1].width += added
+      rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
+    }
+    return rows.filter { !$0.indices.isEmpty }
+  }
+}

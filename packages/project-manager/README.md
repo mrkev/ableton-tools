@@ -12,8 +12,8 @@ references a plugin your Live can't load will open again:
 - **VST2/VST3 → Audio Unit** (GUI, per device, structural swap only: the AU loads
   at its default settings).
 
-Open a folder of projects, a project folder or a single `.als`: File › Open works
-out which from what you pick.
+Open your Projects folder (a folder of project folders) or a single project folder
+with File › Open. One project folder shows as a library of one project.
 
 ### The library
 
@@ -35,7 +35,9 @@ filters by set, project or plugin name.
 
 **All Projects** (or a project) shows status counts, what's holding sets back, and a
 table of sets with their Live version, tempo, arrangement length, track count,
-missing samples and save date; double-click a row to open its page. **Plugins**
+plugins, missing samples, when the project was created and when the set was saved;
+right-click the table's header to show or hide columns, and double-click a row to
+open its page. **Plugins**
 lists every plugin in the library with what it needs (works natively, converts to
 its VST3, can be replaced, or won't load), how many sets use it, and in its inspector
 which sets those are.

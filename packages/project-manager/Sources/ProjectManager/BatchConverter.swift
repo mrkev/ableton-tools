@@ -256,7 +256,8 @@ enum BatchCli {
     }
 
     let folder = URL(fileURLWithPath: args[i + 1])
-    guard let root = LibraryDiscovery.classify(folder), root != .set(folder) else {
+    let projects = LibraryDiscovery.projects(in: folder)
+    guard !projects.isEmpty else {
       print("no projects found in \(folder.path)")
       return 1
     }
@@ -266,7 +267,7 @@ enum BatchCli {
     let includeOptional = args.contains("--include-native")
     var jobs: [BatchJob] = []
     var unreadable = 0
-    for set in LibraryDiscovery.projects(for: root).flatMap(\.sets) {
+    for set in projects.flatMap(\.sets) {
       guard let scan = try? LiveSetScanner.scan(url: set.url) else {
         unreadable += 1
         continue

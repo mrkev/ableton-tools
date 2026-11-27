@@ -51,7 +51,7 @@ enum ProjectManagerApp {
     }
 
     let model = AppModel()
-    // `ProjectManager <path>` opens a library, project folder or set on launch.
+    // `ProjectManager <folder>` opens a folder of projects, or one project, on launch.
     // Arguments that follow an option are its value, not a path.
     let valued: Set<String> = ["--select"]
     let paths = args.indices.dropFirst().filter { !args[$0].hasPrefix("-") && !valued.contains(args[$0 - 1]) }
@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-  /// A set or folder from Finder ("Open With", or dropped on the Dock icon).
+  /// A folder from Finder ("Open With", or dropped on the Dock icon).
   func application(_ application: NSApplication, open urls: [URL]) {
     guard let url = urls.first else { return }
     model.open(url: url)
@@ -142,7 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var focusedURL: URL? {
     if let url = model.focusedSetURL { return url }
     if case .project(let url)? = model.focus { return url }
-    if case .set(let url)? = model.root { return url }
     return nil
   }
 

@@ -26,7 +26,6 @@ struct SetPageView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .task { await model.loadIfNeeded() }
-    .onAppear { app.scanIfNeeded(model.url) }
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
         OpenInLiveButton(url: model.url, showsIcon: false)

@@ -30,8 +30,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/ProjectManager"
 cp App/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 
-# .als files and folders are "Alternate": the app shows under Open With and takes
-# drops on its Dock icon, but double-clicking a set still opens Live.
+# Folders are "Alternate": the app shows under Open With and takes drops on its
+# Dock icon, but double-clicking a folder still opens Finder.
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,12 +52,6 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleDocumentTypes</key>
   <array>
-    <dict>
-      <key>CFBundleTypeName</key><string>Ableton Live Set</string>
-      <key>CFBundleTypeExtensions</key><array><string>als</string></array>
-      <key>CFBundleTypeRole</key><string>Editor</string>
-      <key>LSHandlerRank</key><string>Alternate</string>
-    </dict>
     <dict>
       <key>CFBundleTypeName</key><string>Folder</string>
       <key>LSItemContentTypes</key><array><string>public.folder</string></array>
