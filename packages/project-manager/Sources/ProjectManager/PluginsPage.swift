@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Every plugin in the library: what it needs, and how many sets use it.
@@ -5,29 +6,15 @@ import SwiftUI
 struct PluginsPage: View {
   @EnvironmentObject var app: AppModel
   @EnvironmentObject var catalogs: PluginCatalogs
-  @State private var filter = Filter.all
   @State private var sortOrder = [KeyPathComparator(\PluginUsage.setCount, order: .reverse)]
   @State private var selection = Set<PluginUsage.ID>()
   @StoredColumns<PluginUsage>("pluginsTableColumns") private var columns
 
-  enum Filter: String, CaseIterable, Identifiable {
-    case all = "All"
-    case attention = "Needs attention"
-    case native = "Works natively"
-    var id: String { rawValue }
-  }
-
   private var rows: [PluginUsage] {
     let query = app.searchText.trimmingCharacters(in: .whitespaces)
-    return app.plugins.filter { p in
-      switch filter {
-      case .all: true
-      case .attention: p.verdict.rank < 3
-      case .native: p.verdict == .native
-      }
-    }
-    .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
-    .sorted(using: sortOrder)
+    return app.plugins
+      .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+      .sorted(using: sortOrder)
   }
 
   var body: some View {
@@ -38,12 +25,6 @@ struct PluginsPage: View {
           Text(summary).foregroundStyle(.secondary)
         }
         Spacer()
-        Picker("Show", selection: $filter) {
-          ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
       }
       .padding(24)
 
@@ -51,13 +32,20 @@ struct PluginsPage: View {
         ProgressView("Looking at installed plugins…").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
-          TableColumn("Plugin", value: \.name) { p in Text(p.name).lineLimit(1) }
+          TableColumn("Name", value: \.name) { p in Text(p.name).lineLimit(1) }
             .width(min: 140, ideal: 190)
             .customizationID("plugin")
             .disabledCustomizationBehavior(.visibility)
           TableColumn("Format", value: \.formatName) { p in FormatBadge(text: p.formatName) }
             .width(min: 44, ideal: 54)
             .customizationID("format")
+          TableColumn("Architecture", value: \.architectureRank) { p in
+            Text(p.installed?.architecture.title ?? "Not installed")
+              .foregroundStyle(p.installed == nil || p.installed?.architecture == .bit32 ? .red : .primary)
+              .lineLimit(1)
+          }
+          .width(min: 80, ideal: 110)
+          .customizationID("architecture")
           TableColumn("Status", value: \.verdictRank) { p in
             HStack(spacing: 6) {
               Image(systemName: p.verdict.icon).foregroundStyle(p.verdict.tint).frame(width: 16)
@@ -83,6 +71,9 @@ struct PluginsPage: View {
           if ids.count == 1, let id = ids.first {
             Button("Show Details") { showDetails(id) }
           }
+          let found = app.plugins.filter { ids.contains($0.id) }.compactMap { $0.installed?.url }
+          Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(found) }
+            .disabled(found.isEmpty)
         } primaryAction: { ids in
           if let id = ids.first { showDetails(id) }
         }
@@ -155,6 +146,16 @@ private struct PluginDetails: View {
           if let detail = usage.verdict.detail {
             Text(detail).font(.callout).foregroundStyle(.secondary)
           }
+          HStack {
+            Text(usage.installed?.architecture.title ?? "Not installed").foregroundStyle(.secondary)
+            Spacer()
+            Button("Show in Finder") {
+              if let url = usage.installed?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            .disabled(usage.installed?.url == nil)
+            .help(usage.installed?.url?.path ?? "No installed bundle to show")
+          }
+          .padding(.top, 2)
         }
         if case .replaceable(let s) = usage.verdict {
           VStack(alignment: .leading, spacing: 6) {

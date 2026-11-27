@@ -10,6 +10,8 @@ struct AudioUnitInfo: Identifiable, Hashable, Codable {
   let subTypeCode: OSType
   let manufacturerCode: OSType
   var architecture = PluginArchitecture.native
+  /// Its bundle, when the system reports one.
+  var url: URL?
   /// Has an arm64 build, so a native Live can load it.
   var isNative: Bool { architecture == .native }
 
@@ -35,6 +37,7 @@ enum AudioUnitCatalog {
   static func installed() -> [AudioUnitInfo] {
     let desc = AudioComponentDescription()  // all-zero => match everything
     let comps = AVAudioUnitComponentManager.shared().components(matching: desc)
+    let bundles = componentBundles()
     return comps
       .map { c in
         let d = c.audioComponentDescription
@@ -44,9 +47,45 @@ enum AudioUnitCatalog {
           typeCode: d.componentType,
           subTypeCode: d.componentSubType,
           manufacturerCode: d.componentManufacturer,
-          architecture: PluginArchitecture(c.availableArchitectures))
+          architecture: PluginArchitecture(c.availableArchitectures),
+          url: bundles.byCodes[[d.componentType, d.componentSubType, d.componentManufacturer]]
+            ?? bundles.byName[normalized(c.name)])
       }
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+  }
+
+  /// The `.component` bundles in the Components folders, by the codes each lists in
+  /// its Info.plist, and by name for older ones that list none.
+  /// (`AVAudioUnitComponent.componentURL` is deprecated.) App extension Audio Units
+  /// have no bundle here.
+  private static func componentBundles() -> (byCodes: [[OSType]: URL], byName: [String: URL]) {
+    var byCodes: [[OSType]: URL] = [:]
+    var byName: [String: URL] = [:]
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    for dir in [URL(fileURLWithPath: "/Library/Audio/Plug-Ins/Components"),
+                home.appendingPathComponent("Library/Audio/Plug-Ins/Components")] {
+      let urls = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+      for url in urls where url.pathExtension == "component" {
+        byName[normalized(url.deletingPathExtension().lastPathComponent)] = url
+        let components = Bundle(url: url)?.object(forInfoDictionaryKey: "AudioComponents") as? [[String: Any]] ?? []
+        for component in components {
+          let codes = ["type", "subtype", "manufacturer"].compactMap { (component[$0] as? String).flatMap(code) }
+          if codes.count == 3 { byCodes[codes] = url }
+        }
+      }
+    }
+    return (byCodes, byName)
+  }
+
+  private static func normalized(_ name: String) -> String {
+    String(name.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains))
+  }
+
+  /// "aufx" → its OSType.
+  private static func code(_ text: String) -> OSType? {
+    let bytes = Array(text.utf8)
+    guard bytes.count == 4 else { return nil }
+    return bytes.reduce(0) { $0 << 8 | OSType($1) }
   }
 
   static func fourCC(_ code: OSType) -> String {

@@ -41,8 +41,10 @@ row to open its page. A set's **kind** is what its least capable plugin needs as
 saved: **Native** (Apple Silicon), **x86-64** (Live under Rosetta), **32-bit** (no
 current Mac runs it, Rosetta included) or **Not Installed**. **Plugins**
 lists every plugin in the library with what it needs (works natively, converts to
-its VST3, can be replaced, or won't load), how many sets use it; double-click one for
-which sets those are, in a HUD panel. Every table's columns can be shown or hidden
+its VST3, can be replaced, or won't load), the architecture of its installed build
+(native arm64, x86-64, 32-bit, or not installed) and how many sets use it;
+double-click one for which sets those are, in a HUD panel, and Show in Finder for
+its bundle. Every table's columns can be shown or hidden
 from its header's context menu.
 
 Statuses come from a fast byte scan of each set, cached by file date and size;

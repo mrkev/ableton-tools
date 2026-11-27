@@ -57,8 +57,12 @@ struct PluginUsage: Identifiable, Hashable {
   var instances: Int
   /// The worst any of its instances fares.
   var verdict: PluginVerdict
+  /// Its build in the format the sets use; `nil` when it isn't installed.
+  var installed: InstalledPlugin?
 
   var setCount: Int { sets.count }
+  /// Not installed sorts last.
+  var architectureRank: Int { installed?.architecture.rawValue ?? 3 }
   var formatName: String { format.badge ?? "" }
   var verdictRank: Int { verdict.rank }
 }
@@ -72,16 +76,19 @@ enum PluginIndex {
     var byKey: [String: PluginUsage] = [:]
     var order: [String] = []
 
-    func add(name: String, format: DeviceFormat, set: URL, load: PluginLoad, substitution: Substitution?) {
+    func add(name: String, format: DeviceFormat, set: URL, load: PluginLoad, substitution: Substitution?,
+             installed: InstalledPlugin?) {
       let key = format.rawValue + ":" + name.lowercased().filter { $0.isLetter || $0.isNumber }
       let verdict = PluginVerdict(load: load, substitution: substitution)
       if var usage = byKey[key] {
         usage.instances += 1
         if usage.sets.last != set { usage.sets.append(set) }
         if verdict.rank < usage.verdict.rank { usage.verdict = verdict }
+        usage.installed = usage.installed ?? installed
         byKey[key] = usage
       } else {
-        byKey[key] = PluginUsage(id: key, name: name, format: format, sets: [set], instances: 1, verdict: verdict)
+        byKey[key] = PluginUsage(id: key, name: name, format: format, sets: [set], instances: 1, verdict: verdict,
+                                 installed: installed)
         order.append(key)
       }
     }
@@ -96,15 +103,15 @@ enum PluginIndex {
     for (url, scan) in sets {
       for p in scan.vst2 {
         add(name: p.name, format: .vst, set: url, load: raw.load(p),
-            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .vst))
+            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .vst), installed: raw.installed(p))
       }
       for p in scan.vst3 {
         add(name: p.name, format: .vst3, set: url, load: raw.load(p),
-            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .vst3))
+            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .vst3), installed: raw.installed(p))
       }
       for p in scan.au {
         add(name: p.name, format: .au, set: url, load: raw.load(p),
-            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .au))
+            substitution: installed(Substitution.allCases.first { $0.matches(p) }, .au), installed: raw.installed(p))
       }
     }
     return order.compactMap { byKey[$0] }

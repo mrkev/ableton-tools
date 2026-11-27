@@ -37,7 +37,7 @@ struct StuckPlugin: Hashable {
 
 /// What's installed, in every format, and which builds are native.
 /// The most capable code an installed plugin bundle has.
-enum PluginArchitecture: Int, Comparable, Sendable {
+enum PluginArchitecture: Int, Comparable, Hashable, Sendable {
   /// arm64: a native Live loads it.
   case native
   /// x86-64 only: a Live running under Rosetta loads it.
@@ -61,8 +61,24 @@ enum PluginArchitecture: Int, Comparable, Sendable {
 
   init(bundle: URL) { self.init(Bundle(url: bundle)?.executableArchitectures) }
 
+  /// For a table: "Native (arm64)", "x86-64", "32-bit".
+  var title: String {
+    switch self {
+    case .native: return "Native (arm64)"
+    case .x86_64: return "x86-64"
+    case .bit32: return "32-bit"
+    }
+  }
+
   /// For a plugin's stuck reason: "Intel only", "32-bit only".
   var only: String { self == .bit32 ? "32-bit only" : "Intel only" }
+}
+
+/// An installed plugin: where it is and what it runs on.
+struct InstalledPlugin: Hashable, Sendable {
+  /// `nil` for an Audio Unit the system reports no bundle for (an app extension).
+  let url: URL?
+  let architecture: PluginArchitecture
 }
 
 /// What a set needs to load fully, as saved: the least capable plugin decides.
@@ -104,9 +120,9 @@ struct PluginInventory {
   /// Loadable in this (native) process.
   var vst3: [Vst3PluginInfo]
   /// Installed VST3 bundles, by normalized name.
-  var vst3Bundles: [String: PluginArchitecture]
+  var vst3Bundles: [String: InstalledPlugin]
   /// Installed VST2 bundles, by lowercased file name.
-  var vst2Files: [String: PluginArchitecture]
+  var vst2Files: [String: InstalledPlugin]
   var audioUnits: [AudioUnitInfo]
   /// Opted-in replacements of plugins by different ones.
   var substitutions: Set<Substitution> = []
@@ -124,22 +140,23 @@ struct PluginInventory {
   }
 
   /// Doesn't load plugin code except for `vst3`, which needs the main thread.
-  static func vst2Bundles() -> [String: PluginArchitecture] {
-    var out: [String: PluginArchitecture] = [:]
+  static func vst2Bundles() -> [String: InstalledPlugin] {
+    var out: [String: InstalledPlugin] = [:]
     let home = FileManager.default.homeDirectoryForCurrentUser
     for dir in [URL(fileURLWithPath: "/Library/Audio/Plug-Ins/VST"),
                 home.appendingPathComponent("Library/Audio/Plug-Ins/VST")] {
       for url in bundles(in: dir, withExtension: "vst") {
-        out[url.lastPathComponent.lowercased()] = PluginArchitecture(bundle: url)
+        out[url.lastPathComponent.lowercased()] = InstalledPlugin(url: url, architecture: PluginArchitecture(bundle: url))
       }
     }
     return out
   }
 
-  static func vst3BundleArchitectures() -> [String: PluginArchitecture] {
-    var out: [String: PluginArchitecture] = [:]
+  static func vst3BundleArchitectures() -> [String: InstalledPlugin] {
+    var out: [String: InstalledPlugin] = [:]
     for url in Vst3Catalog.bundles() {
-      out[normalized(url.deletingPathExtension().lastPathComponent)] = PluginArchitecture(bundle: url)
+      out[normalized(url.deletingPathExtension().lastPathComponent)] =
+        InstalledPlugin(url: url, architecture: PluginArchitecture(bundle: url))
     }
     return out
   }
@@ -168,25 +185,30 @@ struct PluginInventory {
 
   // MARK: Single plugins
 
-  /// `nil` when no VST2 build of it is installed.
-  private func architecture(_ plugin: LiveSetScan.Vst2Plugin) -> PluginArchitecture? {
+  /// The plugin's own installed build, in the format the set uses; `nil` when none is.
+  func installed(_ plugin: LiveSetScan.Vst2Plugin) -> InstalledPlugin? {
     if let file = plugin.fileName?.lowercased(), let found = vst2Files[file] { return found }
     return vst2Files[plugin.name.lowercased() + ".vst"]
   }
 
-  /// `nil` when no VST3 bundle of that name is installed.
-  private func architecture(_ plugin: LiveSetScan.Vst3Plugin) -> PluginArchitecture? {
+  /// The VST3 bundle of that name.
+  func installed(_ plugin: LiveSetScan.Vst3Plugin) -> InstalledPlugin? {
     vst3Bundles[Self.normalized(plugin.name)]
   }
 
-  /// The best build among the Audio Units with its codes; `nil` when none is installed.
-  private func architecture(_ plugin: LiveSetScan.AuPlugin) -> PluginArchitecture? {
+  /// The best build among the Audio Units with its codes.
+  func installed(_ plugin: LiveSetScan.AuPlugin) -> InstalledPlugin? {
     audioUnits.filter {
       Int32(bitPattern: $0.typeCode) == plugin.type && Int32(bitPattern: $0.subTypeCode) == plugin.subType
         && Int32(bitPattern: $0.manufacturerCode) == plugin.manufacturer
     }
-    .map(\.architecture).min()
+    .min { $0.architecture < $1.architecture }
+    .map { InstalledPlugin(url: $0.url, architecture: $0.architecture) }
   }
+
+  private func architecture(_ plugin: LiveSetScan.Vst2Plugin) -> PluginArchitecture? { installed(plugin)?.architecture }
+  private func architecture(_ plugin: LiveSetScan.Vst3Plugin) -> PluginArchitecture? { installed(plugin)?.architecture }
+  private func architecture(_ plugin: LiveSetScan.AuPlugin) -> PluginArchitecture? { installed(plugin)?.architecture }
 
   func load(_ plugin: LiveSetScan.Vst2Plugin) -> PluginLoad {
     let vst2 = architecture(plugin)
