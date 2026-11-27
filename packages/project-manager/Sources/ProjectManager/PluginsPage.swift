@@ -8,7 +8,7 @@ struct PluginsPage: View {
   @EnvironmentObject var catalogs: PluginCatalogs
   @State private var sortOrder = [KeyPathComparator(\PluginUsage.setCount, order: .reverse)]
   @State private var selection = Set<PluginUsage.ID>()
-  @StoredColumns<PluginUsage>("pluginsTableColumns") private var columns
+  @StoredColumns<PluginUsage>("pluginsTableColumns.2") private var columns
 
   private var rows: [PluginUsage] {
     let query = app.searchText.trimmingCharacters(in: .whitespaces)
@@ -32,19 +32,20 @@ struct PluginsPage: View {
         ProgressView("Looking at installed plugins…").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+          // Sized so every title reads in full; short values get narrow columns.
           TableColumn("Name", value: \.name) { p in Text(p.name).lineLimit(1) }
-            .width(min: 140, ideal: 190)
+            .width(min: 100, ideal: 140)
             .customizationID("plugin")
             .disabledCustomizationBehavior(.visibility)
           TableColumn("Format", value: \.formatName) { p in FormatBadge(text: p.formatName) }
-            .width(min: 44, ideal: 54)
+            .width(min: 56, ideal: 58, max: 72)
             .customizationID("format")
           TableColumn("Architecture", value: \.architectureRank) { p in
             Text(p.installed?.architecture.title ?? "Not installed")
               .foregroundStyle(p.installed == nil || p.installed?.architecture == .bit32 ? .red : .primary)
               .lineLimit(1)
           }
-          .width(min: 80, ideal: 110)
+          .width(min: 100, ideal: 110)
           .customizationID("architecture")
           TableColumn("Status", value: \.verdictRank) { p in
             HStack(spacing: 6) {
@@ -56,15 +57,16 @@ struct PluginsPage: View {
             }
             .help([p.verdict.title, p.verdict.detail].compactMap { $0 }.joined(separator: ": "))
           }
-          .width(min: 160, ideal: 280)
+          .width(min: 150, ideal: 200)
           .customizationID("status")
+          // Room for the sort indicator: it's the default sort.
           TableColumn("Sets", value: \.setCount) { p in Text("\(p.setCount)").monospacedDigit() }
-            .width(min: 40, ideal: 50)
+            .width(min: 54, ideal: 58, max: 80)
             .customizationID("sets")
           TableColumn("Uses", value: \.instances) { p in
             Text("\(p.instances)").monospacedDigit().foregroundStyle(.secondary)
           }
-          .width(min: 40, ideal: 50)
+          .width(min: 46, ideal: 50, max: 80)
           .customizationID("uses")
         }
         .contextMenu(forSelectionType: PluginUsage.ID.self) { ids in
@@ -93,8 +95,10 @@ struct PluginsPage: View {
 
   private var summary: String {
     let stuck = app.plugins.filter { if case .stuck = $0.verdict { true } else { false } }.count
+    let rosetta = app.plugins.filter { $0.verdict == .rosettaOnly }.count
     return "\(plural(app.plugins.count, "plugin")) across the library"
-      + (stuck > 0 ? " · \(stuck) with no native version" : "")
+      + (stuck > 0 ? " · \(stuck) won't load" : "")
+      + (rosetta > 0 ? " · \(rosetta) Rosetta only" : "")
   }
 }
 
@@ -104,6 +108,7 @@ extension PluginVerdict {
     case .native: return "checkmark.circle.fill"
     case .converts: return "arrow.right.circle.fill"
     case .replaceable: return "arrow.triangle.swap"
+    case .rosettaOnly: return "exclamationmark.triangle.fill"
     case .stuck: return "xmark.octagon.fill"
     }
   }
@@ -113,6 +118,7 @@ extension PluginVerdict {
     case .native: return .green
     case .converts: return .blue
     case .replaceable: return .orange
+    case .rosettaOnly: return .yellow
     case .stuck: return .red
     }
   }

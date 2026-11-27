@@ -267,6 +267,23 @@ struct PluginInventory {
     }
   }
 
+  /// The installed build of a device's plugin, in the device's format.
+  func installed(_ device: Device) -> InstalledPlugin? {
+    switch device.format {
+    case .vst:
+      let info = device.element.firstChild("PluginDesc")?.firstChild("VstPluginInfo")
+      return installed(LiveSetScan.Vst2Plugin(
+        name: device.product, uniqueId: Vst3Migration.vst2UniqueId(device), isChunk: false,
+        fileName: info?.childValue("FileName")))
+    case .vst3:
+      return installed(LiveSetScan.Vst3Plugin(name: device.product, uid: device.vst3Uid ?? []))
+    case .au:
+      return LiveSetScan.AuPlugin(device: device).flatMap { installed($0) }
+    case .native, .m4l:
+      return nil
+    }
+  }
+
   // MARK: Whole sets
 
   /// Every plugin device in the set, with how it loads.

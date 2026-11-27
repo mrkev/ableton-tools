@@ -23,7 +23,7 @@ struct LibrarySidebar: View {
             Label("All Projects", systemImage: "square.stack.3d.up")
               .tag(SidebarItem.overview)
             Label("Plugins", systemImage: "puzzlepiece.extension")
-              .badge(app.plugins.filter { $0.verdict.rank < 2 }.count)
+              .badge(app.plugins.filter(\.verdict.holdsBack).count)
               .tag(SidebarItem.plugins)
           }
 

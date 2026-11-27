@@ -3,27 +3,38 @@ import Foundation
 /// What a plugin needs to work in a native Live, before any per-set choice.
 enum PluginVerdict: Hashable {
   case native
-  /// A VST3 of it replaces it, keeping its settings.
-  case converts(to: String)
+  /// Its own VST3, which is native, replaces it, keeping its settings. The VST3
+  /// is matched by the VST2 unique id it declares it replaces, so it's the same
+  /// plugin.
+  case converts
   /// A different plugin can stand in for it (`Substitution`).
   case replaceable(Substitution)
+  /// Only an Intel (x86-64) build: it loads when Live runs under Rosetta.
+  case rosettaOnly
+  /// Loads in no Live: 32-bit, not installed, or a VST3 with a different id.
   case stuck(String)
 
   /// Most in need of attention first.
   var rank: Int {
     switch self {
     case .stuck: return 0
-    case .replaceable: return 1
-    case .converts: return 2
-    case .native: return 3
+    case .rosettaOnly: return 1
+    case .replaceable: return 2
+    case .converts: return 3
+    case .native: return 4
     }
   }
+
+  /// Keeps the sets using it from opening fully in a native Live, with nothing
+  /// that fixes it automatically.
+  var holdsBack: Bool { rank < 3 }
 
   var title: String {
     switch self {
     case .native: return "Works natively"
-    case .converts(let target): return "Converts to \(target) VST3"
+    case .converts: return "Converts to VST3 (native)"
     case .replaceable(let s): return "Can be replaced with \(s.targetName)"
+    case .rosettaOnly: return "Rosetta only"
     case .stuck: return "Won't load"
     }
   }
@@ -31,18 +42,24 @@ enum PluginVerdict: Hashable {
   var detail: String? {
     switch self {
     case .stuck(let why): return why
+    case .rosettaOnly: return "loads when Live runs under Rosetta"
     case .replaceable(let s): return s.outcome
     case .converts: return "keeps its settings"
     case .native: return nil
     }
   }
 
-  init(load: PluginLoad, substitution: Substitution?) {
+  init(load: PluginLoad, substitution: Substitution?, installed: InstalledPlugin?) {
     switch load {
     case .native: self = .native
-    case .needsConversion(let target): self = .converts(to: target.name)
+    case .needsConversion: self = .converts
     case .substitute(let s, _): self = .replaceable(s)
-    case .stuck(let why): self = substitution.map { .replaceable($0) } ?? .stuck(why)
+    case .stuck(let why):
+      if let substitution {
+        self = .replaceable(substitution)
+      } else {
+        self = installed?.architecture == .x86_64 ? .rosettaOnly : .stuck(why)
+      }
     }
   }
 }
@@ -79,7 +96,7 @@ enum PluginIndex {
     func add(name: String, format: DeviceFormat, set: URL, load: PluginLoad, substitution: Substitution?,
              installed: InstalledPlugin?) {
       let key = format.rawValue + ":" + name.lowercased().filter { $0.isLetter || $0.isNumber }
-      let verdict = PluginVerdict(load: load, substitution: substitution)
+      let verdict = PluginVerdict(load: load, substitution: substitution, installed: installed)
       if var usage = byKey[key] {
         usage.instances += 1
         if usage.sets.last != set { usage.sets.append(set) }

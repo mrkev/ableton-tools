@@ -174,33 +174,50 @@ private struct PluginDeviceRow: Identifiable {
     track = device.trackName
     deviceName = device.name == device.product ? "" : device.name
     let replacement = catalogs.substitution(for: device).map { "can be replaced with \($0.0.targetName)" }
+    let fixable = model.predatesVst3 ? "save in Live 10+ to convert" : nil
+    // What matters is the architecture of the build the device's format loads:
+    // an Intel build still loads in Live under Rosetta; nothing else does.
+    let installed = model.installed(of: device)
+    let rosetta = installed?.architecture == .x86_64
+    /// Why its own build doesn't load natively: "32-bit only", "not installed"…
+    let build = installed.map { $0.architecture == .native ? "different plugin ID" : $0.architecture.only }
+      ?? "not installed"
+    func notNative(_ why: String?, _ more: String? = nil) -> PluginOutcome {
+      rosetta
+        ? PluginOutcome(icon: "exclamationmark.triangle.fill", tint: .yellow, title: "Rosetta only",
+                        detail: ["loads when Live runs under Rosetta", more, replacement].compactMap { $0 }
+                          .joined(separator: " · "))
+        : PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
+                        detail: [why, more, replacement].compactMap { $0 }.joined(separator: " · "))
+    }
     switch model.load(of: device) {
     case .native?, nil:
       now = PluginOutcome(icon: "checkmark.circle.fill", tint: .green, title: "Natively")
-      nowRank = 1
+      nowRank = 2
     case .stuck(let why)?:
-      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
-                          detail: [why, replacement].compactMap { $0 }.joined(separator: " · "))
-      nowRank = 0
+      now = notNative(why)
+      nowRank = rosetta ? 1 : 0
     case .needsConversion?:
-      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
-                          detail: model.predatesVst3 ? "Intel only · save in Live 10+ to convert" : "Intel only")
-      nowRank = 0
+      now = notNative(build, fixable)
+      nowRank = rosetta ? 1 : 0
     case .substitute?:
-      now = PluginOutcome(icon: "xmark.octagon.fill", tint: .red, title: "Won't load",
-                          detail: ["Intel only", replacement].compactMap { $0 }.joined(separator: " · "))
-      nowRank = 0
+      now = notNative(build)
+      nowRank = rosetta ? 1 : 0
     }
 
     let action = model.action(for: device)
     switch action {
     case .keep:
-      fix = nowRank == 1
-        ? PluginOutcome(icon: "minus.circle", tint: .secondary, title: "Nothing to do")
-        : PluginOutcome(icon: "xmark.octagon", tint: .red, title: "Still won't load", detail: now.detail)
-    case .replaceVST3(let target):
+      switch nowRank {
+      case 2: fix = PluginOutcome(icon: "minus.circle", tint: .secondary, title: "Nothing to do")
+      case 1: fix = PluginOutcome(icon: "exclamationmark.triangle", tint: .yellow, title: "Still Rosetta only",
+                                  detail: now.detail)
+      default: fix = PluginOutcome(icon: "xmark.octagon", tint: .red, title: "Still won't load", detail: now.detail)
+      }
+    case .replaceVST3:
+      // Its own VST3, matched by the VST2 id it replaces, and always native.
       let verb = model.loadsNativelyAsVst2(device) ? "Moves to" : "Becomes"
-      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .blue, title: "\(verb) \(target.name) VST3",
+      fix = PluginOutcome(icon: "arrow.right.circle.fill", tint: .blue, title: "\(verb) VST3 (native)",
                           detail: "keeps its settings")
     case .substitute(let sub, _):
       fix = PluginOutcome(icon: "arrow.triangle.swap", tint: .blue, title: "Replaced with \(sub.targetName)",
@@ -231,7 +248,7 @@ private struct PluginActionItems: View {
     Button("Leave As Is") { model.setAction(.keep, for: devices) }
     switch model.vst3Availability(of: device) {
     case .available(let target):
-      Button("\(model.loadsNativelyAsVst2(device) ? "Move" : "Convert") to \(target.name) VST3 (keeps settings)") {
+      Button("\(model.loadsNativelyAsVst2(device) ? "Move" : "Convert") to VST3 (native, keeps settings)") {
         model.setAction(.replaceVST3(target), for: devices)
       }
     case .unavailable(let why):

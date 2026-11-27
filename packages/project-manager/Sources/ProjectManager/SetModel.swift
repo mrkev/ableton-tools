@@ -129,6 +129,9 @@ final class SetModel: ObservableObject {
   /// How a device loads in a native Live, with the default replacements.
   func load(of device: Device) -> PluginLoad? { catalogs.effectiveInventory?.load(device) }
 
+  /// The installed build of a device's plugin, in its format.
+  func installed(of device: Device) -> InstalledPlugin? { catalogs.inventory?.installed(device) }
+
   /// What fixing does to a device unless the user says otherwise: only what it
   /// needs to load.
   func recommendedAction(for device: Device) -> SlotAction {

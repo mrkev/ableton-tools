@@ -66,7 +66,7 @@ struct SetsPage: View {
   /// What's worth doing next here.
   @ViewBuilder private func attention(sets: [LiveSetEntry]) -> some View {
     let urls = Set(sets.map(\.url))
-    let holding = app.plugins.filter { $0.verdict.rank < 2 && $0.sets.contains(where: urls.contains) }
+    let holding = app.plugins.filter { $0.verdict.holdsBack && $0.sets.contains(where: urls.contains) }
       .sorted { $0.sets.filter(urls.contains).count > $1.sets.filter(urls.contains).count }
     let missing = sets.filter { app.lostSamples(of: $0.url) > 0 }.count
     let fixable = app.batchCandidates(in: sets)
