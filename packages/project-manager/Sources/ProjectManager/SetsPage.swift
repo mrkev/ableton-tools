@@ -27,16 +27,6 @@ struct SetsPage: View {
     }
     // Keyed by project: moving between projects reuses this view.
     .task(id: project) { if let projectEntry { app.measure(projectEntry) } }
-    .toolbar {
-      if let url = projectEntry?.url ?? app.root {
-        ToolbarItem(placement: .primaryAction) {
-          Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
-            Label("Show in Finder", systemImage: "folder")
-          }
-          .help("Show this folder in Finder")
-        }
-      }
-    }
   }
 
   @ViewBuilder private func header(sets: [LiveSetEntry]) -> some View {
@@ -46,6 +36,10 @@ struct SetsPage: View {
         Text(subtitle(sets: sets)).foregroundStyle(.secondary)
       }
       Spacer()
+      if let url = projectEntry?.url ?? app.root {
+        Button("Open Folder") { NSWorkspace.shared.open(url) }
+          .help("Open this folder in Finder")
+      }
     }
   }
 

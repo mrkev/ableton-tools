@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
   name: "ProjectManager",
-  platforms: [.macOS(.v14)],
+  platforms: [.macOS(.v15)],
   targets: [
     // Thin C shim over the system zlib for gzip (de)compression of .als files.
     .target(

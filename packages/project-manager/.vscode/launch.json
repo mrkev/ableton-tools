@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:project-manager}",
+      "name": "Debug ProjectManager",
+      "target": "ProjectManager",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug ProjectManager"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:project-manager}",
+      "name": "Release ProjectManager",
+      "target": "ProjectManager",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release ProjectManager"
+    }
+  ]
+}

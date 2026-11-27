@@ -17,11 +17,15 @@ struct LibrarySidebar: View {
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
         List(selection: $app.selection) {
-          Label("All Projects", systemImage: "square.stack.3d.up")
-            .tag(SidebarItem.overview)
-          Label("Plugins", systemImage: "puzzlepiece.extension")
-            .badge(app.plugins.filter { $0.verdict.rank < 2 }.count)
-            .tag(SidebarItem.plugins)
+          // A heading here also spaces these rows from the search field as the
+          // sidebar spaces its other sections.
+          Section("Library") {
+            Label("All Projects", systemImage: "square.stack.3d.up")
+              .tag(SidebarItem.overview)
+            Label("Plugins", systemImage: "puzzlepiece.extension")
+              .badge(app.plugins.filter { $0.verdict.rank < 2 }.count)
+              .tag(SidebarItem.plugins)
+          }
 
           Section("Projects") {
             ForEach(app.projects) { project in
@@ -170,3 +174,4 @@ private struct CopyRow: View {
     .id(SidebarItem.set(url))
   }
 }
+

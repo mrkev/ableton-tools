@@ -33,6 +33,40 @@ struct MissingSample: Hashable, Sendable {
   let hasNamesake: Bool
 }
 
+/// A sample a set refers to, and where it is now: a set page's Samples table.
+struct SampleFile: Identifiable, Hashable, Sendable {
+  enum State: Int, Comparable, Sendable {
+    /// Gone, with nothing of its name to relink to.
+    case lost
+    /// Not where the set expects, but a file of its name is in the libraries or Places.
+    case relinkable
+    /// A missing freeze file: Live freezes the track again.
+    case freeze
+    case found
+
+    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+
+    var title: String {
+      switch self {
+      case .lost: return "Missing"
+      case .relinkable: return "Can relink"
+      case .freeze: return "Freeze missing"
+      case .found: return "Found"
+      }
+    }
+  }
+
+  let id: Int
+  let fileName: String
+  /// Where it was found, or where the set last had it.
+  let path: String
+  /// "Project", "Core Library", a pack's name… Empty when it's missing.
+  let location: String
+  let state: State
+  /// Bytes, when it was found.
+  let size: Int64
+}
+
 /// Where Live keeps its libraries, read from the newest Live's preferences.
 struct LiveLocations: Sendable {
   var coreLibrary: URL?
@@ -101,6 +135,40 @@ struct LiveLocations: Sendable {
       }
     }
     return out
+  }
+
+  /// Every sample in a set, found or not. `missing` is the set's background
+  /// check, which knows which missing ones Live can relink. Touches the disk.
+  func files(in scan: LiveSetScan, setURL: URL, missing: [MissingSample]) -> [SampleFile] {
+    let folder = setURL.deletingLastPathComponent()
+    let fm = FileManager.default
+    return scan.samples.enumerated().map { i, sample in
+      let places = candidates(for: sample, setFolder: folder)
+      if let path = places.first(where: { fm.fileExists(atPath: $0) }) {
+        let size = (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
+        return SampleFile(id: i, fileName: sample.fileName, path: path,
+                          location: location(of: path, project: folder), state: .found, size: size)
+      }
+      let lastKnown = places.first ?? sample.relative
+      let relinkable = missing.contains { $0.lastKnown == lastKnown && $0.fileName == sample.fileName && $0.hasNamesake }
+      let state: SampleFile.State = sample.isFreeze ? .freeze : relinkable ? .relinkable : .lost
+      return SampleFile(id: i, fileName: sample.fileName, path: lastKnown, location: "", state: state, size: 0)
+    }
+  }
+
+  /// Which of Live's places a found sample is in.
+  private func location(of path: String, project: URL) -> String {
+    func under(_ folder: URL?) -> Bool {
+      guard let folder else { return false }
+      return path.hasPrefix(folder.standardizedFileURL.path + "/")
+    }
+    if under(project) { return "Project" }
+    if under(coreLibrary) { return "Core Library" }
+    if let pack = packs.first(where: { under($0.value) }) { return pack.key }
+    if under(userLibrary) { return "User Library" }
+    if under(factoryPacks) { return "Packs" }
+    if places.contains(where: under) { return "Places" }
+    return "Elsewhere"
   }
 
   /// The set's samples that aren't anywhere Live would look. Touches the disk.
