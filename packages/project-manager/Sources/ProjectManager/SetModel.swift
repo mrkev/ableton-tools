@@ -309,9 +309,14 @@ final class SetModel: ObservableObject {
       return
     }
 
-    let notes = (toVst3 > 0 ? ["\(toVst3) to VST3"] : []) + (toAU > 0 ? ["\(toAU) to AU"] : [])
-      + (replaced > 0 ? ["\(replaced) replaced"] : [])
-      + (warnings > 0 ? ["\(warnings) note(s)"] : []) + (failures > 0 ? ["\(failures) failed"] : [])
+    // Built with appends: as one `+` chain of ternaries this took the type
+    // checker ~13s, half the release build.
+    var notes: [String] = []
+    if toVst3 > 0 { notes.append("\(toVst3) to VST3") }
+    if toAU > 0 { notes.append("\(toAU) to AU") }
+    if replaced > 0 { notes.append("\(replaced) replaced") }
+    if warnings > 0 { notes.append("\(warnings) note(s)") }
+    if failures > 0 { notes.append("\(failures) failed") }
     do {
       try document.save(to: destination)
       hasUnsavedEdits = false
