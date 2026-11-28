@@ -414,12 +414,6 @@ final class AppModel: ObservableObject {
     return context(for: url).original.flatMap(copyStatus) ?? .scanning
   }
 
-  /// Which Live a set loads in as saved; nil until it's scanned.
-  func architecture(of url: URL) -> SetArchitecture? {
-    guard let scan = scans[url], let inventory = catalogs.inventory else { return nil }
-    return inventory.architecture(of: scan)
-  }
-
   /// Missing samples that nothing of the same name could stand in for.
   func lostSamples(of url: URL) -> Int {
     samples[url]?.filter { $0.state == .lost }.count ?? 0

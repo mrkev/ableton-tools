@@ -83,41 +83,6 @@ struct InstalledPlugin: Hashable, Sendable {
   let architecture: PluginArchitecture
 }
 
-/// What a set needs to load fully, as saved: the least capable plugin decides.
-/// Only Native and x86-64 sets load anywhere.
-enum SetArchitecture: Int, Comparable {
-  case native, x86_64, bit32, notInstalled
-
-  static func < (a: SetArchitecture, b: SetArchitecture) -> Bool { a.rawValue < b.rawValue }
-
-  init(_ architecture: PluginArchitecture?) {
-    switch architecture {
-    case .native?: self = .native
-    case .x86_64?: self = .x86_64
-    case .bit32?: self = .bit32
-    case nil: self = .notInstalled
-    }
-  }
-
-  var title: String {
-    switch self {
-    case .native: return "Native"
-    case .x86_64: return "x86-64"
-    case .bit32: return "32-bit"
-    case .notInstalled: return "Not Installed"
-    }
-  }
-
-  var explanation: String {
-    switch self {
-    case .native: return "Every plugin has an Apple Silicon build."
-    case .x86_64: return "Some plugins are Intel only: Live loads them running under Rosetta."
-    case .bit32: return "Some plugins are 32-bit only, which no current Mac or Live can load."
-    case .notInstalled: return "Some plugins aren't installed."
-    }
-  }
-}
-
 struct PluginInventory {
   /// Loadable in this (native) process.
   var vst3: [Vst3PluginInfo]
@@ -293,25 +258,6 @@ struct PluginInventory {
     scan.vst2.map { ($0.name, load($0)) } + scan.vst3.map { ($0.name, load($0)) }
       + scan.au.map { ($0.name, load($0)) }
   }
-
-  /// Which Live a set's plugins load in as saved, before any fixing: the least
-  /// capable build among them decides.
-  func architecture(of scan: LiveSetScan) -> SetArchitecture {
-    let builds = scan.vst2.map(build) + scan.vst3.map(build) + scan.au.map(build)
-    return builds.max() ?? .native
-  }
-
-  /// The best build installed in the device's own format.
-  private func build(_ plugin: LiveSetScan.Vst2Plugin) -> SetArchitecture { SetArchitecture(architecture(plugin)) }
-
-  private func build(_ plugin: LiveSetScan.Vst3Plugin) -> SetArchitecture {
-    if load(plugin) == .native { return .native }
-    // A native bundle that didn't match has a different plugin ID: it won't load anywhere.
-    let found = architecture(plugin)
-    return found == .native ? .notInstalled : SetArchitecture(found)
-  }
-
-  private func build(_ plugin: LiveSetScan.AuPlugin) -> SetArchitecture { SetArchitecture(architecture(plugin)) }
 
   /// Plugins with nothing native to load or convert to, and whether each has an
   /// Intel build that loads under Rosetta.

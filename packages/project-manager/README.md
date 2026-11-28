@@ -37,12 +37,10 @@ orange waveform marks sets with samples that can't be found. The search field
 filters by set, project or plugin name.
 
 **All Projects** (or a project) shows status counts, what's holding sets back, and a
-table of sets with their kind, Live version, tempo, arrangement length, track
+table of sets with their Live version, tempo, arrangement length, track
 count, plugins, missing samples, when the project was created and when the set was
 saved; right-click the table's header to show or hide columns, and double-click a
-row to open its page. A set's **kind** is what its least capable plugin needs as
-saved: **Native** (Apple Silicon), **x86-64** (Live under Rosetta), **32-bit** (no
-current Mac runs it, Rosetta included) or **Not Installed**. **Plugins**
+row to open its page. **Plugins**
 lists every plugin in the library with what it needs (native, converts to native
 (its VST3), can be replaced, Rosetta only for an x86-64 build, or won't load for a
 32-bit or missing one), the architecture of its installed build

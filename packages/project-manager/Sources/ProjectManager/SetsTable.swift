@@ -7,8 +7,6 @@ struct SetTableRow: Identifiable {
   let name: String
   let project: String
   let status: SetStatus
-  /// Shown as the set's Kind.
-  let architecture: SetArchitecture?
   let version: String
   let versionKey: Int
   let tempo: Double
@@ -24,7 +22,6 @@ struct SetTableRow: Identifiable {
   let modified: Date
 
   var statusRank: Int { status.kind.rawValue }
-  var architectureRank: Int { architecture?.rawValue ?? -1 }
 
   /// A scan lists every device; count each plugin once per format.
   private static func pluginCount(_ scan: LiveSetScan) -> Int {
@@ -40,7 +37,6 @@ struct SetTableRow: Identifiable {
     name = set.name
     self.project = project.name
     status = app.status(of: set)
-    architecture = app.architecture(of: set.url)
     version = scan.flatMap { SetFacts.version($0.creator) } ?? ""
     versionKey = scan.map { SetFacts.versionKey($0.creator) } ?? 0
     tempo = scan?.tempo ?? 0
@@ -128,14 +124,6 @@ struct SetsTable: View {
     }
     .width(min: 110, ideal: 170)
     .customizationID("status")
-    TableColumn("Kind", value: \.architectureRank) { row in
-      // Only Native and x86-64 sets load anywhere.
-      Text(row.architecture?.title ?? "")
-        .foregroundStyle(row.architecture.map { $0 > .x86_64 } == true ? .red : .primary)
-        .help(row.architecture?.explanation ?? "")
-    }
-    .width(min: 50, ideal: 96)
-    .customizationID("kind")
   }
 
   /// What's in it.

@@ -48,34 +48,27 @@ struct LibrarySidebar: View {
       // place triggers AppKit's NSTableView reentrancy warning.
       .id(onlyNeedsWork)
 
-      Divider()
-      footer
-    }
-    .disabled(catalogs.isHostingPlugins)
-  }
-
-  private var footer: some View {
-    VStack(spacing: 8) {
       if app.isScanning {
+        Divider()
         ProgressView(value: Double(app.scanned), total: Double(max(app.scanTotal, 1))) {
           Text("Scanning \(app.scanned) of \(app.scanTotal) sets…").font(.caption)
         }
-      }
-      Toggle("Only sets that need work", isOn: $onlyNeedsWork)
-        .toggleStyle(.checkbox)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      HStack {
-        Button { app.presentOpenPanel() } label: {
-          Label("Open…", systemImage: "folder")
-        }
-        Spacer()
-        Button { app.rescan() } label: {
-          Label("Rescan", systemImage: "arrow.clockwise")
-        }
-        .help("Check for changed files and folders")
+        .padding(10)
       }
     }
-    .padding(10)
+    .disabled(catalogs.isHostingPlugins)
+    // A filter on the sidebar belongs with its search, not under the list. (Open…
+    // and Rescan are in the File menu.)
+    .toolbar {
+      ToolbarItem {
+        Toggle(isOn: $onlyNeedsWork) {
+          Label("Only Sets That Need Work",
+                systemImage: onlyNeedsWork ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .toggleStyle(.button)
+        .help(onlyNeedsWork ? "Showing only sets that need work" : "Show only sets that need work")
+      }
+    }
   }
 }
 
