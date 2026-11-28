@@ -17,6 +17,11 @@ enum SelfTest {
     // Opt-ins as the batch takes them (--substitute-orbit, --substitute-pro-c).
     inventory.substitutions = Substitution.optedIn(arguments: CommandLine.arguments)
     print("\(url.path): \(projects.count) projects, \(sets.count) sets, \(inventory.vst3.count) VST3 classes")
+    let infos = projects.compactMap(\.info)
+    let versions = Dictionary(grouping: infos.compactMap(\.creatorLive), by: { $0.split(separator: ".").prefix(2).joined(separator: ".") })
+      .mapValues(\.count).sorted { $0.value > $1.value }.prefix(6).map { "\($0.key) \($0.value)" }
+    print("  project info: \(infos.count) of \(projects.count) read, \(infos.filter { $0.created != nil }.count) with a date, "
+      + "\(infos.filter { $0.creatorVersion != nil }.count) with a Live version (\(versions.joined(separator: ", ")))")
 
     var counts: [SetStatus.Kind: Int] = [:]
     var stuckSets: [String: Set<URL>] = [:]

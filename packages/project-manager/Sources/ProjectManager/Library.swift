@@ -33,6 +33,8 @@ struct ProjectEntry: Identifiable, Hashable {
   /// When the folder was made. Live rewrites a set's file on every save, so this is
   /// the only creation date that lasts.
   var created: Date?
+  /// What Live recorded when it created the project.
+  var info: ProjectInfo?
 
   var id: URL { url }
   /// Live names project folders "<name> Project".
@@ -83,7 +85,8 @@ enum LibraryDiscovery {
     }
     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     guard !sets.isEmpty else { return nil }
-    return ProjectEntry(url: url, sets: sets, created: try? url.resourceValues(forKeys: keys).creationDate)
+    return ProjectEntry(url: url, sets: sets, created: try? url.resourceValues(forKeys: keys).creationDate,
+                        info: ProjectInfo(projectFolder: url))
   }
 
   /// A conversion older than its original no longer reflects it.

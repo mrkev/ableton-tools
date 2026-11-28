@@ -19,6 +19,10 @@ struct SetTableRow: Identifiable {
   let copy: FixedCopy
   let size: Int64
   let projectCreated: Date
+  /// From Live's project info: when Live created the project, and which Live.
+  let liveCreated: Date
+  let createdIn: String
+  let createdInKey: Int
   let modified: Date
 
   var statusRank: Int { status.kind.rawValue }
@@ -48,6 +52,9 @@ struct SetTableRow: Identifiable {
     copy = set.copyURL == nil ? .none : set.copyIsCurrent ? .current : .outOfDate
     size = set.size ?? 0
     projectCreated = project.created ?? .distantPast
+    liveCreated = project.info?.created ?? .distantPast
+    createdIn = project.info?.creatorLive ?? ""
+    createdInKey = SetFacts.versionKey("Live " + createdIn)
     modified = set.modified ?? .distantPast
   }
 }
@@ -182,6 +189,13 @@ struct SetsTable: View {
     .width(min: 50, ideal: 70)
     .customizationID("size")
     .defaultVisibility(.hidden)
+    TableColumn("Created in Live", value: \.createdInKey) { row in Text(row.createdIn).monospacedDigit() }
+      .width(min: 104, ideal: 106)
+      .customizationID("createdin")
+    TableColumn("Project Created (Live)", value: \.liveCreated) { row in Text(SetsTable.date(row.liveCreated)) }
+      .width(min: 150, ideal: 160)
+      .customizationID("livecreated")
+      .defaultVisibility(.hidden)
     TableColumn("Project Created", value: \.projectCreated) { row in Text(SetsTable.date(row.projectCreated)) }
       .width(min: 112, ideal: 160)
       .customizationID("created")

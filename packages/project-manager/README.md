@@ -39,7 +39,8 @@ filters by set, project or plugin name.
 **All Projects** (or a project) shows status counts, what's holding sets back, and a
 table of sets with their Live version, tempo, arrangement length, track
 count, plugins, missing samples, when the project was created and when the set was
-saved; right-click the table's header to show or hide columns, and double-click a
+saved, and which Live created the project (from Live's own record of it in
+`Ableton Project Info/Project8_1.cfg`, which also has the date it did so); right-click the table's header to show or hide columns, and double-click a
 row to open its page. **Plugins**
 lists every plugin in the library with what it needs (native, converts to native
 (its VST3), can be replaced, Rosetta only for an x86-64 build, or won't load for a
